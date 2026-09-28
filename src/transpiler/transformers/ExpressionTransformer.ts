@@ -878,7 +878,31 @@ function getParamFromLogicalExpression(node: any, scopeManager: ScopeManager, na
 }
 
 function getParamFromConditionalExpression(node: any, scopeManager: ScopeManager, namespace: string): any {
-    // Transform identifiers in the right side of the assignment
+    transformConditionalOperands(node, scopeManager);
+
+    const memberExpr = ASTFactory.createMemberExpression(ASTFactory.createIdentifier(namespace), ASTFactory.createIdentifier('param'));
+    const nextParamId = scopeManager.generateParamId();
+    const paramCall = {
+        type: 'CallExpression',
+        callee: memberExpr,
+        arguments: [node, UNDEFINED_ARG, makeParamNameArg(scopeManager, nextParamId)],
+        _transformed: true,
+        _isParamCall: true,
+    };
+
+    if (!scopeManager.shouldSuppressHoisting()) {
+        const tempVarName = nextParamId;
+        scopeManager.addLocalSeriesVar(tempVarName);
+        const variableDecl = ASTFactory.createVariableDeclaration(tempVarName, paramCall);
+        scopeManager.addHoistedStatement(variableDecl);
+        return ASTFactory.createIdentifier(tempVarName);
+    }
+
+    return paramCall;
+}
+
+/** Lowers the test and branches of a `?:` to current values, in place. */
+function transformConditionalOperands(node: any, scopeManager: ScopeManager): void {
     walk.recursive(
         node,
         { parent: node, inNamespaceCall: false },
@@ -990,26 +1014,6 @@ function getParamFromConditionalExpression(node: any, scopeManager: ScopeManager
             },
         }
     );
-
-    const memberExpr = ASTFactory.createMemberExpression(ASTFactory.createIdentifier(namespace), ASTFactory.createIdentifier('param'));
-    const nextParamId = scopeManager.generateParamId();
-    const paramCall = {
-        type: 'CallExpression',
-        callee: memberExpr,
-        arguments: [node, UNDEFINED_ARG, makeParamNameArg(scopeManager, nextParamId)],
-        _transformed: true,
-        _isParamCall: true,
-    };
-
-    if (!scopeManager.shouldSuppressHoisting()) {
-        const tempVarName = nextParamId;
-        scopeManager.addLocalSeriesVar(tempVarName);
-        const variableDecl = ASTFactory.createVariableDeclaration(tempVarName, paramCall);
-        scopeManager.addHoistedStatement(variableDecl);
-        return ASTFactory.createIdentifier(tempVarName);
-    }
-
-    return paramCall;
 }
 
 function getParamFromUnaryExpression(node: any, scopeManager: ScopeManager, namespace: string): any {
@@ -1100,6 +1104,10 @@ export function transformFunctionArgument(arg: any, namespace: string, scopeMana
                 if (element.type === 'Identifier') {
                     // Transform identifiers to use $.get(variable, 0)
                     if (scopeManager.isContextBound(element.name) && !scopeManager.isRootParam(element.name)) {
+                        // A dual-use built-in (time, time_close, hour, …) holds its series in `.__value`
+                        if (NAMESPACES_LIKE.includes(element.name) && element.name !== 'na') {
+                            return ASTFactory.createMemberExpression(ASTFactory.createIdentifier(element.name), ASTFactory.createIdentifier('__value'));
+                        }
                         // It's a data variable like 'close', 'open' - use directly
                         return element;
                     }
@@ -1125,7 +1133,10 @@ export function transformFunctionArgument(arg: any, namespace: string, scopeMana
                     return getParamFromLogicalExpression(element, scopeManager, namespace);
                 }
                 if (element.type === 'ConditionalExpression') {
-                    return getParamFromConditionalExpression(element, scopeManager, namespace);
+                    // Inline, like a binary element: a `param` wrapper would put its
+                    // `[value, name]` pair inside the tuple.
+                    transformConditionalOperands(element, scopeManager);
+                    return element;
                 }
                 if (element.type === 'UnaryExpression') {
                     return getParamFromUnaryExpression(element, scopeManager, namespace);
@@ -1206,10 +1217,12 @@ export function transformFunctionArgument(arg: any, namespace: string, scopeMana
         }
 
         // Transform array access
-        const transformedObject =
-            arg.object.type === 'Identifier' && scopeManager.isContextBound(arg.object.name) && !scopeManager.isRootParam(arg.object.name)
-                ? arg.object
-                : transformIdentifierForParam(arg.object, scopeManager);
+        const isBuiltinObject = arg.object.type === 'Identifier' && scopeManager.isContextBound(arg.object.name) && !scopeManager.isRootParam(arg.object.name);
+        const transformedObject = !isBuiltinObject
+            ? transformIdentifierForParam(arg.object, scopeManager)
+            : NAMESPACES_LIKE.includes(arg.object.name)
+              ? ASTFactory.createMemberExpression(ASTFactory.createIdentifier(arg.object.name), ASTFactory.createIdentifier('__value'))
+              : arg.object;
 
         // Transform the index expression and unwrap to scalar via $.get(..., 0)
         let transformedProperty: any;
@@ -1363,6 +1376,12 @@ export function transformFunctionArgument(arg: any, namespace: string, scopeMana
         arg.properties = arg.properties.map((prop: any) => {
             // Get the variable name and kind
             if (prop.value.name) {
+                // `x2 = time`: a dual-use built-in (time, hour, …) is the namespace function,
+                // its series lives in `.__value`. `na` stays the helper the callees recognize.
+                if (NAMESPACES_LIKE.includes(prop.value.name) && prop.value.name !== 'na' && scopeManager.isContextBound(prop.value.name)) {
+                    const valueExpr = ASTFactory.createMemberExpression(ASTFactory.createIdentifier(prop.value.name), ASTFactory.createIdentifier('__value'));
+                    return { ...prop, shorthand: false, value: ASTFactory.createGetCall(valueExpr, 0) };
+                }
                 // If it's a context-bound variable (like 'close', 'open'), a local series
                 // var (non-root function parameter like 'col' in in_out()), or a loop
                 // variable — use the raw identifier, not a scoped reference.
@@ -1598,6 +1617,9 @@ function transformCallExpressionInner(node: any, scopeManager: ScopeManager, nam
         node.callee.object &&
         node.callee.object.type === 'Identifier' &&
         (scopeManager.isContextBound(node.callee.object.name) || node.callee.object.name === 'math' || node.callee.object.name === 'ta');
+
+    // `arr.push(...)`, `Type.new(...)`: no `param` wrapper unwraps these arguments.
+    const isMethodCallOnValue = !isNamespaceCall && node.callee?.type === 'MemberExpression';
 
     if (isNamespaceCall) {
         // Exclude internal context methods from parameter wrapping
@@ -1947,8 +1969,10 @@ function transformCallExpressionInner(node: any, scopeManager: ScopeManager, nam
                     transformIdentifier(node, scopeManager);
                     const isBinaryOperation = node.parent && node.parent.type === 'BinaryExpression';
                     const isConditional = node.parent && node.parent.type === 'ConditionalExpression';
+                    // The callee stores a named-argument value (`Type.new(bar = bar_index)`) as given.
+                    const isNamedArgValue = isMethodCallOnValue && node.parent?.type === 'Property' && node.parent.value === node;
 
-                    if (isConditional || isBinaryOperation) {
+                    if (isConditional || isBinaryOperation || isNamedArgValue) {
                         if (node.type === 'MemberExpression') {
                             transformArrayIndex(node, scopeManager);
                         } else if (node.type === 'Identifier') {
@@ -1980,6 +2004,15 @@ function transformCallExpressionInner(node: any, scopeManager: ScopeManager, nam
                 UnaryExpression(node: any, state: any, c: any) {
                     const newState = { ...state, parent: node };
                     c(node.argument, newState);
+                },
+                ConditionalExpression(node: any, state: any, c: any) {
+                    const newState = isMethodCallOnValue ? { ...state, parent: node } : state;
+                    c(node.test, newState);
+                    c(node.consequent, newState);
+                    c(node.alternate, newState);
+                },
+                ObjectExpression(node: any, state: any, c: any) {
+                    for (const prop of node.properties) c(prop.value, isMethodCallOnValue ? { ...state, parent: prop } : state);
                 },
                 CallExpression(node: any, state: any, c: any) {
                     // Traverse callee chain to resolve inner identifiers (e.g. obj.get(i).out.avg())
