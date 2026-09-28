@@ -392,6 +392,17 @@ export function transformIdentifier(node: any, scopeManager: ScopeManager): void
 // Objects of `[]` that evaluate to a per-bar value rather than a series.
 export const HISTORY_VALUE_OBJECT_TYPES = ['CallExpression', 'BinaryExpression', 'LogicalExpression', 'ConditionalExpression', 'UnaryExpression'];
 
+/** A built-in variable implemented as a namespace function: `ta.nvi`, `strategy.closedtrades`. */
+export function isNamespaceVariable(node: any, scopeManager: ScopeManager): boolean {
+    return (
+        node?.type === 'MemberExpression' &&
+        !node.computed &&
+        node.object?.type === 'Identifier' &&
+        KNOWN_NAMESPACES.includes(node.object.name) &&
+        scopeManager.isContextBound(node.object.name)
+    );
+}
+
 function transformHistoryValueObject(node: any, scopeManager: ScopeManager): any {
     if (node.type === 'CallExpression') {
         if (!node._transformed) transformCallExpression(node, scopeManager);
@@ -425,9 +436,67 @@ export function transformHistoryOffset(offset: any, scopeManager: ScopeManager):
     return transformOperand(offset, scopeManager);
 }
 
+/**
+ * Lowers the `N` of a history reference built here. Walkers of conditions and call
+ * arguments don't revisit it afterwards (`f()[n] > 0`).
+ */
+function lowerHistoryOffset(offset: any, scopeManager: ScopeManager): any {
+    if (offset.type !== 'Identifier') return transformHistoryOffset(offset, scopeManager);
+    if (scopeManager.isLoopVariable(offset.name)) return offset;
+    if (scopeManager.isLocalSeriesVar(offset.name)) {
+        const plainId = ASTFactory.createIdentifier(offset.name);
+        plainId._skipTransformation = true;
+        return ASTFactory.createGetCall(plainId, 0);
+    }
+    return ASTFactory.createGetCall(transformIdentifierForParam(offset, scopeManager), 0);
+}
+
+/**
+ * `ta.nvi[N]`, `strategy.position_size[N]` -> `$.get(pK, N)` with
+ * `const pK = $.param(ta.nvi(...), undefined, 'pK')` hoisted to the script body.
+ * A built-in variable has a value on every bar, so its history is recorded there
+ * rather than where the reference runs: a lazy `and` operand or an `if` block
+ * would skip the bars on which it didn't run.
+ */
+function namespaceVariableHistory(variable: any, offset: any, scopeManager: ScopeManager): any {
+    const ns = variable.object.name;
+    const call: any = {
+        type: 'CallExpression',
+        callee: ASTFactory.createMemberExpression(ASTFactory.createIdentifier(ns), ASTFactory.createIdentifier(variable.property.name)),
+        arguments: ns === 'ta' ? [scopeManager.getNextTACallId()] : [],
+        _transformed: true,
+    };
+    const seriesName = scopeManager.generateParamId();
+    const record = {
+        type: 'CallExpression',
+        callee: ASTFactory.createMemberExpression(ASTFactory.createContextIdentifier(), ASTFactory.createIdentifier('param')),
+        arguments: [call, UNDEFINED_ARG, { type: 'Identifier', name: `'${seriesName}'` }],
+        _transformed: true,
+        _isParamCall: true,
+    };
+    scopeManager.addOuterHoistedStatement(ASTFactory.createVariableDeclaration(seriesName, record));
+    const series = ASTFactory.createIdentifier(seriesName);
+    series._skipTransformation = true;
+    series._arrayAccessed = true;
+    const getCall: any = ASTFactory.createGetCall(series, offset);
+    getCall._transformed = true;
+    getCall._historyTransformed = true;
+    return getCall;
+}
+
 export function transformMemberExpression(memberNode: any, originalParamName: string, scopeManager: ScopeManager): void {
     // Skip transformation for Math object properties
     if (memberNode.object && memberNode.object.type === 'Identifier' && memberNode.object.name === 'Math') {
+        return;
+    }
+
+    // `ta.nvi[1]`, `strategy.position_size[1]`: see namespaceVariableHistory.
+    if (memberNode.computed && isNamespaceVariable(memberNode.object, scopeManager)) {
+        const getCall = namespaceVariableHistory(memberNode.object, lowerHistoryOffset(memberNode.property, scopeManager), scopeManager);
+        Object.assign(memberNode, getCall);
+        delete memberNode.object;
+        delete memberNode.property;
+        delete memberNode.computed;
         return;
     }
 
@@ -447,12 +516,7 @@ export function transformMemberExpression(memberNode: any, originalParamName: st
         !memberNode._historyTransformed
     ) {
         memberNode.object = transformHistoryValueObject(memberNode.object, scopeManager);
-        const offset = memberNode.property;
-        if (offset.type === 'Identifier' && scopeManager.isLocalSeriesVar(offset.name) && !scopeManager.isLoopVariable(offset.name)) {
-            const plainId = ASTFactory.createIdentifier(offset.name);
-            plainId._skipTransformation = true;
-            memberNode.property = ASTFactory.createGetCall(plainId, 0);
-        }
+        memberNode.property = lowerHistoryOffset(memberNode.property, scopeManager);
         const paramId = scopeManager.generateParamId();
         const paramCall = {
             type: 'CallExpression',
@@ -743,7 +807,23 @@ function transformOperand(node: any, scopeManager: ScopeManager, namespace: stri
                     property: { type: 'Identifier', name: '__value' },
                     computed: false,
                 };
-                return ASTFactory.createGetCall(valueExpr, node.property);
+                return ASTFactory.createGetCall(valueExpr, lowerHistoryOffset(node.property, scopeManager));
+            }
+
+            // `ta.nvi[1]`: nothing walks the result again, so lower it here.
+            if (node.computed && isNamespaceVariable(node.object, scopeManager)) {
+                transformMemberExpression(node, '', scopeManager);
+                return node;
+            }
+
+            // Member chains: lower the object first so the chain's base is scoped
+            // (`pts.last().price`, `o.inner.body`, `strategy.opentrades.capital_held`).
+            if (!node.computed && node.object.type === 'CallExpression' && !node.object._transformed) {
+                transformCallExpression(node.object, scopeManager);
+            } else if (!node.computed && node.object.type === 'MemberExpression' && !node.object.computed) {
+                node.object = transformOperand(node.object, scopeManager, namespace);
+                node.object.parent = node;
+                transformMemberExpression(node.object, '', scopeManager);
             }
 
             // Handle array access
@@ -1141,6 +1221,11 @@ export function transformFunctionArgument(arg: any, namespace: string, scopeMana
             break;
     }
 
+    // `plot(ta.nvi[1])`: becomes a `$.get(...)` value, wrapped in the param below.
+    if (arg?.type === 'MemberExpression' && arg.computed && isNamespaceVariable(arg.object, scopeManager)) {
+        transformMemberExpression(arg, '', scopeManager);
+    }
+
     // Check if the argument is an array access (computed member expression)
     const isArrayAccess = arg.type === 'MemberExpression' && arg.computed && arg.property;
 
@@ -1523,6 +1608,14 @@ function resolveCalleeObject(node: any, parentNode: any, scopeManager: ScopeMana
         transformIdentifier(node, scopeManager);
     } else if (node.type === 'MemberExpression') {
         resolveCalleeObject(node.object, node, scopeManager);
+        // Lower the receiver itself like the main walker does: a built-in namespace
+        // variable (`strategy.closedtrades` in `strategy.closedtrades.profit(0)`)
+        // becomes a call, a history access (`arr[1]`) becomes `$.get(...)`.
+        node.parent = parentNode;
+        transformMemberExpression(node, '', scopeManager);
+        if (node.type === 'CallExpression' && !node._transformed) {
+            transformCallExpression(node, scopeManager);
+        }
     } else if (node.type === 'CallExpression') {
         if (node.callee && node.callee.type === 'MemberExpression') {
             resolveCalleeObject(node.callee.object, node.callee, scopeManager);
