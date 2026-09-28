@@ -3,12 +3,15 @@
 import { Series } from '../../../Series';
 
 export function variance(context: any) {
-    return (source: any, _length: any, _callId?: string) => {
+    return (source: any, _length: any, ...rest: any[]) => {
+        // The transpiler appends the call id after the optional `biased` argument.
+        const _callId: string | undefined = typeof rest[rest.length - 1] === 'string' ? rest.pop() : undefined;
         const length = Series.from(_length).get(0);
+        const biased = rest.length === 0 || !!Series.from(rest[0]).get(0);
 
         // Variance calculation
         if (!context.taState) context.taState = {};
-        const stateKey = _callId || `variance_${length}`;
+        const stateKey = _callId || `variance_${length}_${biased}`;
 
         if (!context.taState[stateKey]) {
             context.taState[stateKey] = { 
@@ -66,7 +69,8 @@ export function variance(context: any) {
         }
 
         const mean = sum / length;
-        const variance = sumSquares / length - mean * mean;
+        const biasedVariance = sumSquares / length - mean * mean;
+        const variance = biased ? biasedVariance : (biasedVariance * length) / (length - 1);
 
         return context.precision(variance);
     };

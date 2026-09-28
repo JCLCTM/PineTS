@@ -17,10 +17,12 @@ export function sma(context: any) {
                 prevWindow: [],
                 prevSum: 0,
                 prevCallCount: 0,
+                prevPeriod: NaN,
                 // Tentative state
                 currentWindow: [],
                 currentSum: 0,
                 currentCallCount: 0,
+                currentPeriod: NaN,
             };
         }
 
@@ -32,6 +34,7 @@ export function sma(context: any) {
                 state.prevWindow = [...state.currentWindow];
                 state.prevSum = state.currentSum;
                 state.prevCallCount = state.currentCallCount;
+                state.prevPeriod = state.currentPeriod;
             }
             state.lastIdx = context.idx;
         }
@@ -71,8 +74,9 @@ export function sma(context: any) {
         const isPrevSumInvalid = Number.isNaN(state.prevSum);
 
         // When backfill added values to the window, prevSum doesn't include
-        // them so the incremental path would give wrong results.
-        let useFastPath = !isPrevSumInvalid && !isCurrentInvalid && !backfilled;
+        // them so the incremental path would give wrong results. The same holds
+        // when a series length changed since the previous bar.
+        let useFastPath = !isPrevSumInvalid && !isCurrentInvalid && !backfilled && state.prevPeriod === period;
         
         // If fast path seems possible, we still need to be sure we didn't just pop a NaN (which would make result NaN -> Number, requiring recalc of prevSum didn't allow recovery)
         // Actually, if prevSum was Number, then the window *should* have contained only Numbers. 
@@ -126,6 +130,7 @@ export function sma(context: any) {
         state.currentWindow = window;
         state.currentSum = sum;
         state.currentCallCount = callCount;
+        state.currentPeriod = period;
         
         if (window.length < period) {
             return NaN;
