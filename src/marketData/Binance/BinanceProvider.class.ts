@@ -288,7 +288,7 @@ export class BinanceProvider extends BaseProvider<BinanceProviderConfig> {
             }
 
             // Determine if we need to paginate
-            const needsPagination = this.shouldPaginate(timeframe, limit, sDate, eDate);
+            const needsPagination = this.shouldPaginate(limit, sDate, eDate);
 
             if (needsPagination) {
                 if (sDate && eDate) {
@@ -325,25 +325,15 @@ export class BinanceProvider extends BaseProvider<BinanceProviderConfig> {
     /**
      * Determines if pagination is needed based on the parameters
      */
-    private shouldPaginate(timeframe: string, limit?: number, sDate?: number, eDate?: number): boolean {
+    private shouldPaginate(limit?: number, sDate?: number, eDate?: number): boolean {
         // If limit is explicitly > 1000, we need pagination
         if (limit && limit > 1000) {
             return true;
         }
 
-        // If we have both start and end dates, calculate required candles
-        if (sDate && eDate) {
-            const interval = timeframe_to_binance[timeframe.toUpperCase()];
-
-            const intervalDuration = INTERVAL_DURATION_MS[interval];
-            if (intervalDuration) {
-                const requiredCandles = Math.ceil((eDate - sDate) / intervalDuration);
-                // Need pagination if date range requires more than 1000 candles
-                return requiredCandles > 1000;
-            }
-        }
-
-        return false;
+        // A date range always goes through getMarketDataInterval, even when it fits in one
+        // request: a single request without `limit` only gets Binance's default of 500 candles.
+        return !!(sDate && eDate);
     }
 
     async getSymbolInfo(tickerId: string): Promise<ISymbolInfo> {
