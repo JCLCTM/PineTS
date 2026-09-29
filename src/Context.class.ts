@@ -672,23 +672,31 @@ export class Context {
 
         // If target doesn't exist, create new Series
         if (!trg) {
-            return new Series([value]);
+            return this.typedSeries([value], value);
         }
 
         // If target is already a Series, update it
         if (trg instanceof Series) {
             trg.data[trg.data.length - 1] = value;
+            if (typeof value === 'boolean' && this.pineVersion >= 6) trg.beforeStart = false;
             return trg;
         }
 
         // Legacy: if trg is an array, convert to Series
         if (Array.isArray(trg)) {
             trg[trg.length - 1] = value;
-            return new Series(trg);
+            return this.typedSeries(trg, value);
         }
 
         // Default: create new Series
-        return new Series([value]);
+        return this.typedSeries([value], value);
+    }
+
+    /** A Series over `data`; a Pine v6 bool series reads `false` before its first bar. */
+    private typedSeries(data: any[], value: any, offset: number = 0): Series {
+        const series = new Series(data, offset);
+        if (typeof value === 'boolean' && this.pineVersion >= 6) series.beforeStart = false;
+        return series;
     }
 
     /**
@@ -740,7 +748,7 @@ export class Context {
             value = this.precision(src);
         }
 
-        return new Series([value]);
+        return this.typedSeries([value], value);
     }
 
     /**
@@ -770,7 +778,9 @@ export class Context {
         if (typeof source === 'string') return source;
         if (source instanceof Series) {
             if (index) {
-                return new Series(source.data, source.offset + index);
+                const view = new Series(source.data, source.offset + index);
+                view.beforeStart = source.beforeStart;
+                return view;
             }
             return source;
         }
@@ -788,7 +798,7 @@ export class Context {
             } else {
                 this.params[name][this.params[name].length - 1] = source;
             }
-            return new Series(this.params[name], index || 0);
+            return this.typedSeries(this.params[name], source, index || 0);
         }
     }
 

@@ -1,4 +1,7 @@
 export class Series {
+    /** Value of a read before the first bar: na, or `false` for a Pine v6 bool series (v6 bools are never na). */
+    public beforeStart: any = NaN;
+
     constructor(public data: any[], public offset: number = 0) { }
 
     public get(index: number): any {
@@ -13,9 +16,8 @@ export class Series {
         let lookback = this.offset + index;
         if (!Number.isInteger(lookback)) lookback = Math.trunc(lookback);
         const realIndex = this.data.length - 1 - lookback;
-        if (realIndex < 0 || realIndex >= this.data.length) {
-            return NaN;
-        }
+        if (realIndex < 0) return this.beforeStart;
+        if (realIndex >= this.data.length) return NaN;
         return this.data[realIndex];
     }
 
