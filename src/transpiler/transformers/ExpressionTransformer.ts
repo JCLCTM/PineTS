@@ -1721,6 +1721,11 @@ function transformCallExpressionInner(node: any, scopeManager: ScopeManager, nam
         }
 
         const namespace = node.callee.object.name;
+        // `syminfo.ticker` / `syminfo.prefix` are string variables, and functions of a symbol when
+        // called: the call form goes to `syminfo.__ticker(sym)` / `syminfo.__prefix(sym)`.
+        if (namespace === 'syminfo' && !node.callee.computed && ['ticker', 'prefix'].includes(node.callee.property?.name)) {
+            node.callee.property = ASTFactory.createIdentifier(`__${node.callee.property.name}`);
+        }
         // Transform arguments using the namespace's param
         const newArgs: any[] = [];
         node.arguments.forEach((arg: any) => {

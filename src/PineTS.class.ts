@@ -3,6 +3,7 @@
 import { IProvider, ISymbolInfo } from './marketData/IProvider';
 import { Context } from './Context.class';
 import { splitTickerModifier, withTickerModifier } from './tickerModifier';
+import { createSyminfo } from './namespaces/Syminfo';
 import { Series } from './Series';
 import { Indicator } from './Indicator';
 import { processStrategyOrders, processExitOrders, processMarginCall, finalizeStrategyBar, finalizeStrategyRun, isAdverseFirstBar, applyPendingCloseMarginCall, snapshotStrategyState, restoreStrategyState } from './namespaces/strategy/utils';
@@ -1074,7 +1075,7 @@ export class PineTS {
             inputs,
         });
 
-        context.pine.syminfo = this._syminfo;
+        context.pine.syminfo = createSyminfo(this._syminfo);
         // THE CHART TYPE IS THE TICKER (single source of truth): a non-standard chart is
         // addressed by an extended ticker — `new PineTS(source, "SYM;heikinashi", …)` — so
         // the data source can distinguish the chart series from standard-data requests.
@@ -1086,10 +1087,10 @@ export class PineTS {
         const chartModifier = splitTickerModifier(String(this.tickerId ?? '')).modifier;
         context.chartStyle = chartModifier === 'heikinashi' ? 'heikinashi' : 'standard';
         if (this._syminfo && chartModifier === 'heikinashi') {
-            context.pine.syminfo = {
+            context.pine.syminfo = createSyminfo({
                 ...this._syminfo,
                 tickerid: withTickerModifier(String(this._syminfo.tickerid ?? this.tickerId), 'heikinashi'),
-            };
+            });
         }
         // Chart timezone only affects display formatting (log timestamps).
         // It does NOT override syminfo.timezone, which drives computation

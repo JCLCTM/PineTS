@@ -3,6 +3,7 @@
 import { PineTS } from '../../../PineTS.class';
 import { Series } from '../../../Series';
 import { formatTimeframe, parseTimeframe, timeframeSeconds } from '../../../timeframe';
+import { plainTickerId } from '../../../tickerModifier';
 import { PineArrayObject, PineArrayType } from '../../array/PineArrayObject';
 import { PineTypeObject } from '../../PineTypeObject';
 import { parseArgsForPineParams } from '../../utils';
@@ -291,7 +292,9 @@ export function security_lower_tf(context: any) {
         // ticker. THE CHART TYPE IS THE TICKER: on a non-standard chart it already carries the
         // ";heikinashi" modifier, which rides through to the data source (PineTS' own providers
         // strip it at their boundary).
-        const resolvedSymbol = rawSymbol === '' ? context.tickerId : rawSymbol;
+        // An encoded tickerid (ticker.new / ticker.modify with a session or adjustment) is requested
+        // as its symbol.
+        const resolvedSymbol = plainTickerId(rawSymbol === '' ? context.tickerId : rawSymbol);
         const _symbol = typeof resolvedSymbol === 'string' && resolvedSymbol.includes(':') ? resolvedSymbol.split(':')[1] : resolvedSymbol;
         const rawTimeframe = timeframeSlot instanceof Series ? timeframeSlot.get(0) : timeframeSlot;
         // Empty string "" means "use chart's timeframe" (Pine Script spec)

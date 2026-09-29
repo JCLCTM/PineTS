@@ -265,6 +265,13 @@ export class Context {
             get timenow() {
                 return new Date().getTime();
             },
+            // Best ask / bid are only defined on the 1T timeframe, which PineTS has no data for.
+            get ask() {
+                return NaN;
+            },
+            get bid() {
+                return NaN;
+            },
             get time_tradingday() {
                 // TradingView returns 00:00 UTC of the trading day the bar belongs to.
                 // For daily+ timeframes on 24/7 markets, this equals the bar's close date
