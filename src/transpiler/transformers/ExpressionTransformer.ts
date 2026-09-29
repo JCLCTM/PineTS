@@ -14,6 +14,33 @@ import {
     FOOTPRINT_ROW_METHODS,
 } from '../settings';
 
+/**
+ * Static Pine type of the built-in price / time series a user method can be called on
+ * (`close.prev(2)`, `bar_index.next()`). They are context-bound identifiers, so without this
+ * `close.method()` is read as a call into a `close` namespace.
+ */
+const BUILTIN_SERIES_TYPES: Record<string, string> = {
+    open: 'float',
+    high: 'float',
+    low: 'float',
+    close: 'float',
+    volume: 'float',
+    hl2: 'float',
+    hlc3: 'float',
+    ohlc4: 'float',
+    hlcc4: 'float',
+    bar_index: 'int',
+    last_bar_index: 'int',
+    time: 'int',
+    time_close: 'int',
+};
+
+/** A `float` method accepts an `int` receiver (Pine promotes int to float). */
+function receiverTypeCompatible(receiverType: string | undefined, declaredType: string | undefined): boolean {
+    if (!receiverType || !declaredType) return false;
+    return receiverType === declaredType || (receiverType === 'int' && declaredType === 'float');
+}
+
 const UNDEFINED_ARG = {
     type: 'Identifier',
     name: 'undefined',
@@ -1704,11 +1731,21 @@ function transformCallExpressionInner(node: any, scopeManager: ScopeManager, nam
     }
 
     // Check if this is a namespace method call (e.g., ta.ema, math.abs)
+    // `close.prev(2)`: a user method called on a built-in series is not a namespace call.
+    const isUserMethodOnBuiltinSeries =
+        node.callee?.type === 'MemberExpression' &&
+        !node.callee.computed &&
+        node.callee.object?.type === 'Identifier' &&
+        node.callee.object.name in BUILTIN_SERIES_TYPES &&
+        node.callee.property?.type === 'Identifier' &&
+        scopeManager.isUserMethod(node.callee.property.name);
+
     const isNamespaceCall =
         node.callee &&
         node.callee.type === 'MemberExpression' &&
         node.callee.object &&
         node.callee.object.type === 'Identifier' &&
+        !isUserMethodOnBuiltinSeries &&
         (scopeManager.isContextBound(node.callee.object.name) || node.callee.object.name === 'math' || node.callee.object.name === 'ta');
 
     // `arr.push(...)`, `Type.new(...)`: no `param` wrapper unwraps these arguments.
@@ -1885,6 +1922,12 @@ function transformCallExpressionInner(node: any, scopeManager: ScopeManager, nam
             return transformFunctionArgument(arg, CONTEXT_NAME, scopeManager);
         });
 
+        // `type Vis` with a user method declared on it: name the factory so a receiver can be
+        // recognised as a `Vis` at runtime (`Context.callMethod`).
+        if (node.callee.name === 'Type' && node._udtName && scopeManager.isMethodReceiverTypeName(node._udtName)) {
+            node.arguments.push({ type: 'Literal', value: node._udtName, raw: JSON.stringify(node._udtName) });
+        }
+
         // Inject unique call ID for the function call only if it is a user-defined function
         // Built-in functions (like na, nz, bool) are context-bound and should not receive a call ID
         if (!scopeManager.isContextBound(node.callee.name)) {
@@ -1965,8 +2008,27 @@ function transformCallExpressionInner(node: any, scopeManager: ScopeManager, nam
                 receiverBaseType = normalizePineBaseType(fieldType);
             }
         }
-        const methodReceiverType = scopeManager.getMethodReceiverType(methodName);
-        const receiverTypeMatches = !!receiverBaseType && !!methodReceiverType && receiverBaseType === methodReceiverType;
+        // Static type of a string / bool literal (`'bull'.label(...)`) or a built-in series
+        // (`close.prev(2)`). Kept apart from `receiverBaseType` (which also drives the
+        // order-flow routing below): an untyped receiver must still dispatch by name.
+        const literalOrSeriesType: string | undefined =
+            _obj.type === 'Literal'
+                ? typeof _obj.value === 'string'
+                    ? 'string'
+                    : typeof _obj.value === 'boolean'
+                      ? 'bool'
+                      : undefined
+                : _obj.type === 'Identifier' && _obj.name in BUILTIN_SERIES_TYPES && scopeManager.isContextBound(_obj.name)
+                  ? BUILTIN_SERIES_TYPES[_obj.name]
+                  : undefined;
+        const staticReceiverType = receiverBaseType ?? literalOrSeriesType;
+
+        // A Pine name can carry several methods on different receiver types
+        // (`method set(line …)` / `method set(box …)`): one JS function each.
+        const candidateJsNames = scopeManager.getMethodCandidates(methodName);
+        const declaredReceiverTypeOf = (jsName: string) => scopeManager.getMethodReceiverType(jsName.slice(3)); // strip `$M_`
+        const matchingJsName = candidateJsNames.find((js) => receiverTypeCompatible(staticReceiverType, declaredReceiverTypeOf(js)));
+        const receiverTypeMatches = matchingJsName !== undefined;
 
         const orderflowType = receiverBaseType ?? footprintRowCallType(_obj, scopeManager);
         if (orderflowType && ORDERFLOW_METHODS[orderflowType]?.has(methodName)) orderflowReceiverType = orderflowType;
@@ -1991,11 +2053,23 @@ function transformCallExpressionInner(node: any, scopeManager: ScopeManager, nam
         // positive type match.
         const dispatchOnUnknownReceiver = receiverBaseType === undefined && !BUILTIN_METHOD_NAMES.has(methodName);
 
+        // Still ambiguous after all of the above (`hist.shift().delete()`, `lines.get(i).set(…)`):
+        // the receiver is a call result or element of a collection, so its type is not known
+        // statically, and the name either collides with a built-in member or has several
+        // overloads. Decide from the receiver's runtime type: a user method whose declared
+        // receiver type matches wins, anything else keeps the built-in behaviour.
+        const dispatchAtRuntime =
+            staticReceiverType === undefined &&
+            !isReceiverUdtInstance &&
+            (BUILTIN_METHOD_NAMES.has(methodName) || candidateJsNames.length > 1);
+
         if (
             isUserFunction &&
             isUserMethod &&
-            !scopeManager.isContextBound(methodName) &&
-            (receiverTypeMatches || isReceiverUdtInstance || dispatchOnUnknownReceiver)
+            // A method may share its name with a namespace (`method label(string dir, …)`), but only
+            // a positive receiver-type match can tell `'bull'.label(…)` from a built-in call.
+            (!scopeManager.isContextBound(methodName) || receiverTypeMatches) &&
+            (receiverTypeMatches || isReceiverUdtInstance || dispatchOnUnknownReceiver || dispatchAtRuntime)
         ) {
             // It's a user variable/function.
             // Transform obj.method(args) -> method(obj, args)
@@ -2036,7 +2110,31 @@ function transformCallExpressionInner(node: any, scopeManager: ScopeManager, nam
             // the call against the prefixed JS identifier.
             // Mark with _skipTransformation to prevent the identifier from being resolved
             // to a same-named variable (e.g. `isSame2` function vs `isSame2` variable).
-            const functionRef = ASTFactory.createIdentifier(`$M_${methodName}`);
+            if (dispatchAtRuntime) {
+                // $.callMethod(name, id, [[fn, udtName|null], ...], receiver, ...args)
+                const candidateEntries = (candidateJsNames.length ? candidateJsNames : [`$M_${methodName}`]).map((jsName) => {
+                    const fnIdent = ASTFactory.createIdentifier(jsName);
+                    fnIdent._skipTransformation = true;
+                    const declared = declaredReceiverTypeOf(jsName);
+                    // A user type is told apart by the name its factory was given (see `Type` above).
+                    const udtName = declared && scopeManager.isUdtTypeName(declared)
+                        ? { type: 'Literal', value: declared, raw: JSON.stringify(declared) }
+                        : { type: 'Literal', value: null, raw: 'null' };
+                    return { type: 'ArrayExpression', elements: [fnIdent, udtName] };
+                });
+                node.callee = ASTFactory.createMemberExpression(ASTFactory.createContextIdentifier(), ASTFactory.createIdentifier('callMethod'));
+                node.arguments = [
+                    { type: 'Literal', value: methodName, raw: JSON.stringify(methodName) },
+                    callId,
+                    { type: 'ArrayExpression', elements: candidateEntries },
+                    transformedObj,
+                    ...transformedArgs,
+                ];
+                node._transformed = true;
+                return;
+            }
+
+            const functionRef = ASTFactory.createIdentifier(matchingJsName ?? candidateJsNames[0] ?? `$M_${methodName}`);
             functionRef._skipTransformation = true;
 
             const newArgs = [functionRef, callId, transformedObj, ...transformedArgs];
@@ -2192,8 +2290,18 @@ function transformCallExpressionInner(node: any, scopeManager: ScopeManager, nam
         // Case 2 — Chained: $.get(X, N).field.method()
         //   callee.object is a MemberExpression (the .field access), with $.get() deeper
         const isChained = calleeObj?.type === 'MemberExpression' && hasGetCallInChain(calleeObj);
+        // Case 3 — `.delete()` on a field of a plain variable (`for e in arr` → `e.line.delete()`):
+        //   no `$.get()` in the chain, but the field can still be an un-assigned (na) drawing,
+        //   and TradingView treats `delete` on na as a no-op. Limited to `delete` because other
+        //   calls on na are runtime errors there.
+        const isFieldDelete =
+            !node.callee.computed &&
+            node.callee.property?.name === 'delete' &&
+            calleeObj?.type === 'MemberExpression' &&
+            !calleeObj.computed &&
+            calleeObj.property?.type === 'Identifier';
 
-        if (isDirect || isChained) {
+        if (isDirect || isChained || isFieldDelete) {
             // Double optional chaining: obj?.method?.()
             // The node stays as a CallExpression (safe for AST walkers) but gets:
             //   1. optional: true on the CallExpression  → produces ?.()

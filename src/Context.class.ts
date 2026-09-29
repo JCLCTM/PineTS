@@ -34,6 +34,7 @@ import { FootprintHelper } from './namespaces/footprint/FootprintHelper';
 import { VolumeRowHelper } from './namespaces/footprint/VolumeRowHelper';
 import { Ticker } from './namespaces/Ticker';
 import { isScalarHelper } from './namespaces/utils';
+import { receiverMatchesMethod } from './namespaces/methodDispatch';
 import type { IndicatorOptions } from './types/PineTypes';
 
 export class Context {
@@ -978,6 +979,28 @@ export class Context {
         } finally {
             this.popId();
         }
+    }
+
+    /**
+     * `receiver.name(args)` where a user `method` of that name may or may not apply, decided from
+     * the receiver's runtime type (see `receiverMatchesMethod`). No match runs the built-in member
+     * instead; calling any method on `na` is a no-op, like everywhere else in Pine.
+     * @param name - the Pine method name
+     * @param id - the call ID for the user method's local context
+     * @param candidates - `[userFunction, udtName | null]` per overload, in declaration order
+     * @param receiver - the receiver, wrapped like any user-function argument
+     */
+    public callMethod(name: string, id: string, candidates: any[][], receiver: any, ...args: any[]) {
+        const unwrap = (v: any) => (v instanceof Series ? v.get(0) : v);
+        const recv = unwrap(receiver);
+        if (recv === null || recv === undefined || (typeof recv === 'number' && Number.isNaN(recv))) return undefined;
+
+        for (const [fn, factory] of candidates) {
+            if (receiverMatchesMethod(fn, factory, recv)) return this.call(fn, id, receiver, ...args);
+        }
+
+        const member = recv[name];
+        return typeof member === 'function' ? member.apply(recv, args.map(unwrap)) : undefined;
     }
 
     //#endregion
