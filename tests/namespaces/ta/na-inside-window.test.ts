@@ -221,4 +221,33 @@ plot(${b('ta.rising(g, 2)')}, "r2")
         expect(v('x1')).toEqual(v('x2'));
         expect(v('r1')).toEqual(v('r2'));
     });
+
+    it('a cross in an if condition inside a function called from two places keeps each caller apart', async () => {
+        // Such a call gets the same state key for both callers; the second one (whose level is
+        // always na) must not overwrite the first one's previous values.
+        const { plots } = await new PineTS(fixture.candles).run(`//@version=6
+indicator("t")
+f(float lvl) =>
+    int hit = 0
+    if ta.crossover(close, lvl) and bar_index > 0
+        hit := 1
+    if ta.rising(close - lvl, 2)
+        hit += 2
+    hit
+float never = na
+a = f(open)
+b = f(never)
+plot(a, "a")
+plot(b, "b")
+`);
+        const a = plots['a'].data.map((d: any) => d.value);
+        const c = fixture.candles;
+        for (let i = 3; i < c.length; i++) {
+            const d = (k: number) => c[k].close - c[k].open;
+            const cross = c[i].close > c[i].open && c[i - 1].close <= c[i - 1].open ? 1 : 0;
+            const rise = d(i) > d(i - 1) && d(i - 1) > d(i - 2) ? 2 : 0;
+            expect(a[i], `bar ${i}`).toBe(cross + rise);
+        }
+        expect(plots['b'].data.every((d: any) => d.value === 0)).toBe(true);
+    });
 });

@@ -2,17 +2,26 @@
 
 import { isNa } from './nonNaWindow';
 
-/** Committed / tentative state keyed by `key`, or `undefined` without a key (stateless use). */
+/**
+ * Committed / tentative state keyed by `key`, or `undefined` without a key (stateless use).
+ *
+ * A key used twice on one bar is shared by several call paths (a ta call hoisted out of an `if`
+ * condition inside a user function gets a literal call id, so every caller of that function lands
+ * on the same key), or the bar is being recomputed. Either way the carried values could come from
+ * the wrong call, so from then on the state is marked `shared` and callers read the series instead.
+ */
 function barState(context: any, key: string | undefined, init: () => any) {
     if (!key) return undefined;
     if (!context.taState) context.taState = {};
     let state = context.taState[key];
-    if (!state) state = context.taState[key] = { lastIdx: -1, prev: init(), current: init() };
+    if (!state) state = context.taState[key] = { lastIdx: -1, shared: false, prev: init(), current: init() };
     if (context.idx > state.lastIdx) {
         if (state.lastIdx >= 0) state.prev = { ...state.current };
         state.lastIdx = context.idx;
+    } else if (state.current.callIdx === context.idx) {
+        state.shared = true;
     }
-    return state;
+    return state.shared ? undefined : state;
 }
 
 /**
