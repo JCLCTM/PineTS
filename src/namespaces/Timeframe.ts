@@ -63,6 +63,10 @@ export class Timeframe {
     public get ismonthly() {
         return this.chart?.unit === 'M';
     }
+    // Tick charts ("1T") are not supported, so the chart is never a tick chart.
+    public get isticks() {
+        return false;
+    }
     public get isseconds() {
         return this.chart?.unit === 'S';
     }

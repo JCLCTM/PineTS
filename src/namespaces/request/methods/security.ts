@@ -2,7 +2,7 @@
 
 import { PineTS } from '../../../PineTS.class';
 import { Series } from '../../../Series';
-import { splitTickerModifier, withTickerModifier } from '../../../tickerModifier';
+import { plainTickerId, splitTickerModifier, withTickerModifier } from '../../../tickerModifier';
 import { formatTimeframe, parseTimeframe, timeframeSeconds } from '../../../timeframe';
 import { findSecContextIdx } from '../utils/findSecContextIdx';
 import { findLTFContextIdx } from '../utils/findLTFContextIdx';
@@ -139,7 +139,9 @@ export function security(context: any) {
         const chartModifier = ctxParts.modifier === 'standard' ? null : ctxParts.modifier;
         // Empty string "" means "use chart's symbol" (Pine Script spec) — i.e. the chart's own
         // ticker, modifier included.
-        const resolvedSymbol = rawSymbol === '' ? context.tickerId : rawSymbol;
+        // An encoded tickerid (ticker.new / ticker.modify with a session or adjustment) is requested
+        // as its symbol.
+        const resolvedSymbol = plainTickerId(rawSymbol === '' ? context.tickerId : rawSymbol);
         const _symbol = typeof resolvedSymbol === 'string' && resolvedSymbol.includes(':') ? resolvedSymbol.split(':')[1] : resolvedSymbol;
         const rawTimeframe = timeframeSlot instanceof Series ? timeframeSlot.get(0) : timeframeSlot;
         // Empty string "" means "use chart's timeframe" (Pine Script spec)

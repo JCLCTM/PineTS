@@ -99,12 +99,12 @@ export class NAHelper {
 }
 
 /**
- * Alert frequency constants (Pine Script alert.freq_* enum values).
+ * Alert frequency constants (Pine Script alert.freq_* values, as TradingView prints them).
  */
 export const ALERT_FREQ = {
-    freq_all: 'alert.freq_all',
-    freq_once_per_bar: 'alert.freq_once_per_bar',
-    freq_once_per_bar_close: 'alert.freq_once_per_bar_close',
+    freq_all: 'all',
+    freq_once_per_bar: 'once_per_bar',
+    freq_once_per_bar_close: 'once_per_bar_close',
 };
 
 /**
@@ -142,7 +142,9 @@ export class AlertHelper {
     @silentInSecondary
     any(message: any, freq?: any, opts?: any): void {
         const msg = Series.from(message).get(0);
-        const f = freq ? Series.from(freq).get(0) : ALERT_FREQ.freq_once_per_bar;
+        // Earlier PineTS versions used 'alert.freq_all', ...: accept those strings too.
+        const given = freq ? Series.from(freq).get(0) : ALERT_FREQ.freq_once_per_bar;
+        const f = typeof given === 'string' && given.startsWith('alert.freq_') ? given.slice('alert.freq_'.length) : given;
 
         // Extract callsite ID: from transpiler-injected __callsiteId, or fallback counter
         let callsiteId: string;
