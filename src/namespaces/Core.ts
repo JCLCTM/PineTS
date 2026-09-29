@@ -251,7 +251,8 @@ export class Core {
         const _s = Series.from(series);
         for (let i = 0; i < _s.length; i++) {
             const val = _s.get(i);
-            if (!isNaN(val)) {
+            // `isNaN('#FF0000')` is true, so colors need an explicit na test.
+            if (val != null && !(typeof val === 'number' && isNaN(val))) {
                 return val;
             }
         }

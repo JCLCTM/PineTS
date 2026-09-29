@@ -327,11 +327,11 @@ export class Context {
         const chartHelper = new ChartHelper(this);
         this.pine['chart'] = {
             param: chartHelper.param.bind(chartHelper),
-            bg_color: chartHelper.bg_color.bind(chartHelper),
-            fg_color: chartHelper.fg_color.bind(chartHelper),
-            // Chart-type predicates are Pine VARIABLES (`chart.is_heikinashi`, no call) —
-            // exposed as getters so bare member access yields the boolean, like the
-            // visible-range built-ins below.
+            // Chart colors and chart-type predicates are Pine VARIABLES (`chart.fg_color`,
+            // `chart.is_heikinashi`, no call) — exposed as getters so bare member access
+            // yields the value, like the visible-range built-ins below.
+            get bg_color() { return chartHelper.bg_color(); },
+            get fg_color() { return chartHelper.fg_color(); },
             get is_standard() { return chartHelper.is_standard(); },
             get is_heikinashi() { return chartHelper.is_heikinashi(); },
             get is_kagi() { return chartHelper.is_kagi(); },
