@@ -2,7 +2,7 @@
 
 import { PineTS } from '../../../PineTS.class';
 import { Series } from '../../../Series';
-import { TIMEFRAMES, normalizeTimeframe } from '../utils/TIMEFRAMES';
+import { formatTimeframe, parseTimeframe, timeframeSeconds } from '../../../timeframe';
 import { PineArrayObject, PineArrayType } from '../../array/PineArrayObject';
 import { PineTypeObject } from '../../PineTypeObject';
 import { parseArgsForPineParams } from '../../utils';
@@ -318,20 +318,22 @@ export function security_lower_tf(context: any) {
             }
         }
 
-        const ctxTimeframeIdx = TIMEFRAMES.indexOf(normalizeTimeframe(context.timeframe));
-        const reqTimeframeIdx = TIMEFRAMES.indexOf(normalizeTimeframe(_timeframe));
+        const ctxTimeframe = parseTimeframe(context.timeframe);
+        const reqTimeframe = parseTimeframe(_timeframe);
 
-        if (ctxTimeframeIdx === -1 || reqTimeframeIdx === -1) {
+        if (!ctxTimeframe || !reqTimeframe) {
             if (_ignore_invalid_timeframe) return NaN;
-            throw new Error('Invalid timeframe');
+            throw new Error(`Invalid value of the 'timeframe' argument ('${reqTimeframe ? context.timeframe : _timeframe}') in the 'security_lower_tf' function.`);
         }
+        const ctxSeconds = timeframeSeconds(ctxTimeframe);
+        const reqSeconds = timeframeSeconds(reqTimeframe);
 
-        if (reqTimeframeIdx > ctxTimeframeIdx) {
+        if (reqSeconds > ctxSeconds) {
             if (_ignore_invalid_timeframe) return NaN;
             throw new Error(`Timeframe ${_timeframe} is not lower than or equal to chart timeframe ${context.timeframe}`);
         }
 
-        if (reqTimeframeIdx === ctxTimeframeIdx) {
+        if (formatTimeframe(reqTimeframe) === formatTimeframe(ctxTimeframe)) {
             if (Array.isArray(_expression)) {
                 // Tuple: each element becomes a 1-element PineArrayObject
                 const arrays = _expression.map((v: any) =>

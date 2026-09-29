@@ -211,7 +211,14 @@ export class BinanceProvider extends BaseProvider<BinanceProviderConfig> {
 
                 const data = await this._fetchRawChunk(tickerId, timeframe, 1000, currentStart, chunkEnd);
 
-                if (data.length === 0) break;
+                if (data.length === 0) {
+                    // Nothing in this chunk: the range may start before the symbol was listed.
+                    // Jump to the first candle after currentStart instead of giving up.
+                    const [first] = await this._fetchRawChunk(tickerId, timeframe, 1, currentStart);
+                    if (!first || first.openTime >= endTime || first.openTime <= currentStart) break;
+                    currentStart = first.openTime;
+                    continue;
+                }
 
                 allData = allData.concat(data);
 
@@ -265,6 +272,10 @@ export class BinanceProvider extends BaseProvider<BinanceProviderConfig> {
 
     protected getSupportedTimeframes(): Set<string> {
         return new Set(['1', '3', '5', '15', '30', '60', '120', '240', 'D', 'W', 'M']);
+    }
+
+    protected aggregatesOnCalendarGrid(): boolean {
+        return true;
     }
 
     protected async _getMarketDataNative(tickerId: string, timeframe: string, limit?: number, sDate?: number, eDate?: number): Promise<Kline[]> {

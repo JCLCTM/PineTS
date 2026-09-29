@@ -204,6 +204,10 @@ export class MockProvider extends BaseProvider<MockProviderConfig> {
         return new Set(['1', '3', '5', '15', '30', '45', '60', '120', '180', '240', 'D', 'W', 'M']);
     }
 
+    protected aggregatesOnCalendarGrid(): boolean {
+        return true;
+    }
+
     /**
      * Implements _getMarketDataNative
      *
