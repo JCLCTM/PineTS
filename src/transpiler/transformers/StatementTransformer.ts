@@ -984,49 +984,10 @@ export function transformWhileStatement(node: any, scopeManager: ScopeManager, c
     // Suppress hoisting so namespace calls like array.size() stay inline.
     scopeManager.setSuppressHoisting(true);
 
-    // Transform the test condition
-    // Must wrap Series identifiers in $.get() so comparisons use concrete
-    // values, not raw Series objects (e.g. `while bar_index > cnt`).
+    // Transform the test condition like an `if` test (series identifiers read with $.get,
+    // `na(x)` / namespace calls lowered once), with the calls kept inline.
     if (node.test) {
-        walk.recursive(node.test, scopeManager, {
-            Identifier(node: any, state: ScopeManager) {
-                if (!node.computed) {
-                    transformIdentifier(node, state);
-                    if (node.type === 'Identifier') {
-                        const isNamespaceObject =
-                            scopeManager.isContextBound(node.name) &&
-                            node.parent &&
-                            node.parent.type === 'MemberExpression' &&
-                            node.parent.object === node;
-                        if (!isNamespaceObject) {
-                            node.computed = true;
-                            addArrayAccess(node, state);
-                        }
-                    }
-                }
-            },
-            MemberExpression(node: any, state: ScopeManager, c: any) {
-                transformMemberExpression(node, '', scopeManager);
-                // Recurse into non-namespace objects for user variable resolution
-                if (node.type === 'MemberExpression' && node.object) {
-                    if (node.object.type !== 'Identifier' || !scopeManager.isContextBound(node.object.name)) {
-                        c(node.object, state);
-                    }
-                }
-            },
-            CallExpression(node: any, state: ScopeManager, c: any) {
-                // Transform namespace method calls inline (no hoisting)
-                node.callee.parent = node;
-                c(node.callee, state);
-                transformCallExpression(node, state);
-                // Also traverse arguments
-                if (node.arguments) {
-                    for (const arg of node.arguments) {
-                        c(arg, state);
-                    }
-                }
-            },
-        });
+        transformExpression(node.test, scopeManager);
     }
 
     scopeManager.setSuppressHoisting(false);
@@ -1152,7 +1113,15 @@ export function transformIfStatement(node: any, scopeManager: ScopeManager, c: a
     // Transform the else branch (alternate) if it exists
     if (node.alternate) {
         scopeManager.pushScope('els');
-        c(node.alternate, scopeManager);
+        if (node.alternate.type === 'IfStatement') {
+            // An `else if` condition runs only when the earlier branches were not taken, so the
+            // calls hoisted out of it must land inside the else branch, not before the whole `if`.
+            const block = { type: 'BlockStatement', body: [node.alternate] };
+            c(block, scopeManager);
+            node.alternate = block.body.length === 1 && block.body[0].type === 'IfStatement' ? block.body[0] : block;
+        } else {
+            c(node.alternate, scopeManager);
+        }
         scopeManager.popScope();
     }
 }

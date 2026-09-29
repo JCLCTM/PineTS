@@ -52,7 +52,7 @@ import ScopeManager from './analysis/ScopeManager';
 import { injectImplicitImports } from './transformers/InjectionTransformer';
 import { normalizeNativeImports } from './transformers/NormalizationTransformer';
 import { wrapInContextFunction } from './transformers/WrapperTransformer';
-import { transformNestedArrowFunctions, preProcessContextBoundVars, preProcessUdtRegistry, runAnalysisPass } from './analysis/AnalysisPass';
+import { transformNestedArrowFunctions, renameParamsShadowingFunctions, preProcessContextBoundVars, preProcessUdtRegistry, runAnalysisPass } from './analysis/AnalysisPass';
 import { runTypeInferencePass } from './analysis/TypeInferencePass';
 import { markLazyOperands } from './analysis/LazyOperandPass';
 import {
@@ -118,6 +118,9 @@ export function transpile(source: string | Function, options: { debug: boolean; 
 
     // Pre-process: Transform all nested arrow functions
     transformNestedArrowFunctions(ast);
+
+    // Pre-process: a parameter named like a user function must not shadow the function
+    renameParamsShadowingFunctions(ast);
 
     // Pre-process: Normalize native imports (prevent renaming of standard symbols)
     normalizeNativeImports(ast);

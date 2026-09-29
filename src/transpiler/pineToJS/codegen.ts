@@ -29,6 +29,9 @@ export class CodeGenerator {
     // follow the `_$N` rename — unlike variable collisions, where `fill(...)`
     // still means the built-in.
     private userFunctionCollisions: Set<string>;
+    // Renamed user FUNCTIONS (collision or reserved name) -> their JS name, for calls made
+    // where a same-named parameter hides the entry in the rename map.
+    private userFunctionRenames: Map<string, string>;
     // UDT names that were renamed because they are JS reserved words
     // (`type new`). Type annotation strings naming them are rewritten too.
     private renamedTypeNames: Set<string>;
@@ -43,6 +46,7 @@ export class CodeGenerator {
         this.paramRenameCounter = 0;
         this.functionParams = new Map();
         this.userFunctionCollisions = new Set();
+        this.userFunctionRenames = new Map();
         this.renamedTypeNames = new Set();
     }
 
@@ -81,6 +85,7 @@ export class CodeGenerator {
         this.lastCommentedLine = -1;
         this.functionParams = new Map();
         this.userFunctionCollisions = new Set();
+        this.userFunctionRenames = new Map();
 
         if (ast.type === 'Program') {
             // Pre-scan: collect user-defined function parameter lists and
@@ -267,6 +272,7 @@ export class CodeGenerator {
                 if (!renameMap.has(node.id.name)) {
                     renameMap.set(node.id.name, `${node.id.name}_$${this.paramRenameCounter++}`);
                 }
+                this.userFunctionRenames.set(node.id.name, renameMap.get(node.id.name)!);
                 // Remember that this collision name is a user FUNCTION so that
                 // bare call sites `name(...)` follow the rename (see
                 // renameVariableRefsInAST). Overloads share one entry.
@@ -379,6 +385,10 @@ export class CodeGenerator {
                     node.callee.name = renameMap.get(node.callee.name)!;
                 }
                 // else: skip callee
+            } else if (node.callee?.type === 'Identifier' && this.userFunctionRenames.has(node.callee.name)) {
+                // A parameter of the enclosing function has the same name (`f(timeframe) =>
+                // timeframe(timeframe)`): a call still resolves to the renamed user function.
+                node.callee.name = this.userFunctionRenames.get(node.callee.name)!;
             } else {
                 this.renameVariableRefsInAST(node.callee, renameMap);
             }
@@ -556,6 +566,12 @@ export class CodeGenerator {
             case 'ReturnStatement':
                 return this.generateReturnStatement(node);
             case 'BlockStatement':
+                if (node._sequence) {
+                    // `a = 1, b = 2`: the statements belong to the enclosing block, so no braces
+                    // (they would hide the names from the next lines inside a switch-arm function).
+                    for (const stmt of node.body) this.generateStatement(stmt);
+                    return;
+                }
                 return this.generateBlockStatement(node);
             case 'TypeDefinition':
                 return this.generateTypeDefinition(node);
@@ -2136,6 +2152,7 @@ export class CodeGenerator {
         this.indent--;
         this.write(this.indentStr.repeat(this.indent));
         this.write('}\n'); // end switch
+        this.writeNaForMissingDefault(node);
 
         this.indent--;
         this.write(this.indentStr.repeat(this.indent));
@@ -2210,10 +2227,18 @@ export class CodeGenerator {
                 this.write('\n');
             }
         }
+        this.writeNaForMissingDefault(node);
 
         this.indent--;
         this.write(this.indentStr.repeat(this.indent));
         this.write('})()');
+    }
+
+    // A switch used as a value is na when no arm matches and there is no default arm.
+    writeNaForMissingDefault(node) {
+        if (node.cases.some((c) => !c.test)) return;
+        this.write(this.indentStr.repeat(this.indent));
+        this.write('return na;\n');
     }
 
     // Generate switch without discriminant as if/else if/else chain (for statement context)
