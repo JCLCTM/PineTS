@@ -131,6 +131,8 @@ export class Context {
     public source: IProvider | any[];
     public tickerId: string;
     public timeframe: string = '';
+    /** `//@version=` of the running Pine Script source; null for PineTS syntax. */
+    public pineVersion: number | null = null;
     public limit: number;
     public sDate: number;
     public eDate: number;

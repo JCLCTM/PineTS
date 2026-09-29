@@ -241,7 +241,9 @@ export function transpile(source: string | Function, options: { debug: boolean; 
 
     const _wraperFunction = new Function('', `var _r = ${transformedCode}\n; return _r;`);
     const mainFn = _wraperFunction(this);
+    (mainFn as any)._pineVersion = pineVersion;
     if (slices && Object.keys(slices).length > 0) {
+        for (const slice of Object.values(slices)) (slice as any)._pineVersion = pineVersion;
         (mainFn as any)._ltfSlices = slices;
     }
     return mainFn;

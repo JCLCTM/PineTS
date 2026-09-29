@@ -9,6 +9,8 @@ const H = 60 * MIN;
 const D = 24 * H;
 const INTERVAL_MS: Record<string, number> = { '1h': H, '2h': 2 * H, '4h': 4 * H, '1d': D };
 const NOW = Date.UTC(2026, 8, 28);
+// First candle of the symbol; the endpoint returns nothing before it.
+let listedAt = 0;
 
 // Price at an instant; a candle's close is the price at its close, so every
 // timeframe built from these candles is consistent with the others.
@@ -24,7 +26,7 @@ function klines(url: URL) {
     const start = url.searchParams.get('startTime');
     const end = Math.min(Number(url.searchParams.get('endTime') ?? NOW), NOW);
     const lastOpen = Math.floor(end / step) * step;
-    const firstOpen = start !== null ? Math.ceil(Number(start) / step) * step : lastOpen - (limit - 1) * step;
+    const firstOpen = Math.max(listedAt, start !== null ? Math.ceil(Number(start) / step) * step : lastOpen - (limit - 1) * step);
     const rows: any[] = [];
     for (let t = firstOpen; t <= lastOpen && rows.length < limit; t += step) {
         const open = priceAt(t);
@@ -50,6 +52,16 @@ describe('BinanceProvider date-range pagination', () => {
     });
     afterEach(() => {
         vi.unstubAllGlobals();
+        listedAt = 0;
+    });
+
+    it('returns the candles of a range that starts more than 1000 candles before the listing', async () => {
+        listedAt = Date.UTC(2024, 0, 10);
+        const data = await new BinanceProvider().getMarketData('BTCUSDT', 'D', undefined, Date.UTC(2020, 0, 1), Date.UTC(2024, 2, 1) - 1);
+
+        expect(data.length).toBe(51);
+        expect(data[0].openTime).toBe(listedAt);
+        expect(data[data.length - 1].openTime).toBe(Date.UTC(2024, 1, 29));
     });
 
     it.each([400, 500, 501, 700, 1000, 1001, 2500])('returns every 1h candle of a %i-candle range', async (n) => {

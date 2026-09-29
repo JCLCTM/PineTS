@@ -7,18 +7,11 @@ import { Series } from './Series';
 import { Indicator } from './Indicator';
 import { processStrategyOrders, processExitOrders, processMarginCall, finalizeStrategyBar, finalizeStrategyRun, isAdverseFirstBar, applyPendingCloseMarginCall, snapshotStrategyState, restoreStrategyState } from './namespaces/strategy/utils';
 
-// ── Timeframe duration utility ──────────────────────────────────────
-//prettier-ignore
-const TIMEFRAME_DURATION_MS: Record<string, number> = {
-    '1': 60_000, '3': 180_000, '5': 300_000, '15': 900_000, '30': 1_800_000,
-    '60': 3_600_000, '120': 7_200_000, '180': 10_800_000, '240': 14_400_000,
-    '4H': 14_400_000, '1D': 86_400_000, 'D': 86_400_000,
-    '1W': 604_800_000, 'W': 604_800_000,
-    '1M': 30 * 86_400_000, 'M': 30 * 86_400_000,
-};
+import { parseTimeframe, timeframeSeconds } from './timeframe';
+
 function getTimeframeDurationMs(timeframe: string | undefined): number {
-    if (!timeframe) return 86_400_000; // default to 1D when timeframe is unknown
-    return TIMEFRAME_DURATION_MS[timeframe] ?? TIMEFRAME_DURATION_MS[timeframe.toUpperCase()] ?? 86_400_000;
+    const tf = parseTimeframe(timeframe);
+    return tf ? timeframeSeconds(tf) * 1000 : 86_400_000; // default to 1D when timeframe is unknown
 }
 
 /**
@@ -456,6 +449,7 @@ export class PineTS {
         if (!periods) periods = this.data.length;
 
         const context = this._initializeContext(null as any, inputs, this._isSecondaryContext);
+        context.pineVersion = (transpiledFn as any)._pineVersion ?? null;
         this._transpiledCode = transpiledFn;
         // Preserve slice attribution on the context so any nested LTF
         // request inside the slice can keep using the same map.
@@ -485,6 +479,7 @@ export class PineTS {
         this._usesVisibleRange = prepared.usesVisibleRange;
 
         const context = this._initializeContext(ind.source ?? null as any, prepared.inputs, this._isSecondaryContext);
+        context.pineVersion = (prepared.fn as any)._pineVersion ?? null;
         this._transpiledCode = prepared.fn;
         // Propagate transpile-time slices (one per request.security_lower_tf
         // call site) onto the Context so the slow path of the LTF runtime
@@ -530,6 +525,7 @@ export class PineTS {
         this._usesVisibleRange = prepared.usesVisibleRange;
 
         const context = this._initializeContext(ind.source ?? null as any, prepared.inputs, this._isSecondaryContext);
+        context.pineVersion = (prepared.fn as any)._pineVersion ?? null;
         this._transpiledCode = prepared.fn;
         if (prepared.ltfSlices) (context as any)._ltfTruncatedBodies = prepared.ltfSlices;
 
