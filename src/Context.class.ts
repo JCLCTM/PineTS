@@ -33,6 +33,7 @@ import { TableHelper } from './namespaces/table/TableHelper';
 import { FootprintHelper } from './namespaces/footprint/FootprintHelper';
 import { VolumeRowHelper } from './namespaces/footprint/VolumeRowHelper';
 import { Ticker } from './namespaces/Ticker';
+import { isScalarHelper } from './namespaces/utils';
 import type { IndicatorOptions } from './types/PineTypes';
 
 export class Context {
@@ -772,6 +773,8 @@ export class Context {
             return source;
         }
 
+        // Record the scalar a dual-use helper stands for, so `strategy.closedtrades[1]` has a history.
+        if (isScalarHelper(source)) source = source.__value;
         if (!Array.isArray(source) && typeof source === 'object') return source;
 
         if (!this.params[name]) this.params[name] = [];
