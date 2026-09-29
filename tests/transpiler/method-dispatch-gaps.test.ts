@@ -148,6 +148,28 @@ plot(close)`);
         expect(logs).toEqual(['ok 2']);
     });
 
+    it('.delete() on the result of a user method that returns nothing (na) is a no-op', async () => {
+        // `addLabel` pops (and returns) a label only from the second call on; the other calls return na.
+        const logs = await runLogs(`
+method addLabel(array<label> arr, label lab) =>
+    arr.unshift(lab)
+    if arr.size() > 1
+        arr.pop()
+var array<label> labs = array.new<label>()
+nl() =>
+    n = 0
+    for x in label.all
+        n += 1
+    n
+if barstate.islast
+    labs.addLabel(label.new(bar_index, low, "a")).delete()
+    log.info("after 1 " + str.tostring(nl()))
+    labs.addLabel(label.new(bar_index, high, "b")).delete()
+    log.info("after 2 " + str.tostring(nl()))
+plot(close)`);
+        expect(logs).toEqual(['after 1 1', 'after 2 1']);
+    });
+
     it('.delete() on a drawing field set then deleted twice', async () => {
         const logs = await runLogs(`
 type Tk

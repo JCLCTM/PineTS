@@ -2294,12 +2294,17 @@ function transformCallExpressionInner(node: any, scopeManager: ScopeManager, nam
         //   no `$.get()` in the chain, but the field can still be an un-assigned (na) drawing,
         //   and TradingView treats `delete` on na as a no-op. Limited to `delete` because other
         //   calls on na are runtime errors there.
+        //   The same goes for the result of a user function or method (`arr.addLabel(l).delete()`):
+        //   one that falls off its end without a value returns `na`.
+        const isUserCallResult =
+            calleeObj?.type === 'CallExpression' &&
+            calleeObj.callee?.type === 'MemberExpression' &&
+            calleeObj.callee.object?.name === CONTEXT_NAME &&
+            ['call', 'callMethod'].includes(calleeObj.callee.property?.name);
         const isFieldDelete =
             !node.callee.computed &&
             node.callee.property?.name === 'delete' &&
-            calleeObj?.type === 'MemberExpression' &&
-            !calleeObj.computed &&
-            calleeObj.property?.type === 'Identifier';
+            ((calleeObj?.type === 'MemberExpression' && !calleeObj.computed && calleeObj.property?.type === 'Identifier') || isUserCallResult);
 
         if (isDirect || isChained || isFieldDelete) {
             // Double optional chaining: obj?.method?.()
