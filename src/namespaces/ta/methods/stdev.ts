@@ -3,9 +3,11 @@
 import { Series } from '../../../Series';
 
 export function stdev(context: any) {
-    return (source: any, _length: any, _bias: any = true, _callId?: string) => {
+    return (source: any, _length: any, ...rest: any[]) => {
+        // The transpiler appends the call id after the optional `biased` argument.
+        const _callId: string | undefined = typeof rest[rest.length - 1] === 'string' ? rest.pop() : undefined;
         const length = Series.from(_length).get(0);
-        const bias = Series.from(_bias).get(0);
+        const bias = rest.length === 0 || !!Series.from(rest[0]).get(0);
 
         // Standard Deviation
         if (!context.taState) context.taState = {};

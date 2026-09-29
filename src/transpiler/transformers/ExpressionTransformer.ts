@@ -1792,7 +1792,8 @@ function transformCallExpressionInner(node: any, scopeManager: ScopeManager, nam
         }
 
         // Inject unique call ID for TA functions to enable proper state management
-        if (namespace === 'ta') {
+        // (`math.random` keeps a seeded generator per call site the same way)
+        if (namespace === 'ta' || fullPath === 'math.random') {
             if (scopeManager.getCurrentScopeType() === 'fn') {
                 // If inside a function, combine $$.id with the static ID
                 const staticId = scopeManager.getNextTACallId();
