@@ -55,6 +55,8 @@ export class Parser {
     private paramScopes: Set<string>[] = [];
     // Counter for the temps that carry a trailing loop's value out of a function body.
     private loopValueCounter: number = 0;
+    // Counter for the flags of `once` blocks.
+    private onceCounter: number = 0;
     // Tuple size returned by user functions whose last statement is a tuple
     // (`f(a) => [a, a * 2]`); null when the name is overloaded with other shapes.
     private functionTupleArity: Map<string, number | null> = new Map();
@@ -407,6 +409,50 @@ export class Parser {
         );
     }
 
+    // `once [condition]` followed by an indented block (Pine v6). `once` is not a keyword
+    // in v5, so it is recognized from its shape: no assignment or `=>` on the line.
+    private isOnceStatement(): boolean {
+        if (this.peek().type !== TokenType.IDENTIFIER || this.peek().value !== 'once') return false;
+        const next = this.peek(1);
+        if (next.type === TokenType.COMMA || next.type === TokenType.DOT) return false;
+        if (next.type === TokenType.OPERATOR && ['=', ':=', '+=', '-=', '*=', '/=', '%='].includes(next.value)) return false;
+        let i = 1;
+        let depth = 0;
+        for (; ; i++) {
+            const tok = this.peek(i);
+            if (tok.type === TokenType.EOF) return false;
+            if (tok.type === TokenType.LPAREN || tok.type === TokenType.LBRACKET) depth++;
+            else if (tok.type === TokenType.RPAREN || tok.type === TokenType.RBRACKET) depth--;
+            else if (depth <= 0 && (tok.type === TokenType.NEWLINE || tok.type === TokenType.INDENT)) break;
+            else if (tok.type === TokenType.OPERATOR && tok.value === '=>') return false;
+        }
+        while (this.peek(i).type === TokenType.NEWLINE || this.peek(i).type === TokenType.COMMENT) i++;
+        return this.peek(i).type === TokenType.INDENT;
+    }
+
+    // `once cond` → `var bool __once_N = false` + `if not __once_N` → `if cond` → `__once_N := true` + block.
+    // As on TradingView the condition is not evaluated once the block has run, the state is per call
+    // site inside a function, and `var` rolls the flag back on a realtime bar that has not closed.
+    private parseOnceStatement() {
+        this.advance(); // consume 'once'
+        const test = this.match(TokenType.NEWLINE) || this.match(TokenType.INDENT) ? null : this.parseExpression();
+        this.skipNewlines();
+        const body = this.parseBlock();
+
+        const flag = `__once_${this.onceCounter++}`;
+        const flagId = new Identifier(flag);
+        flagId.varType = 'bool';
+        const decl = new VariableDeclaration([new VariableDeclarator(flagId, new Literal(false), 'bool')], VariableDeclarationKind.VAR);
+        body.body.unshift(new ExpressionStatement(new AssignmentExpression('=', new Identifier(flag), new Literal(true))));
+        const run = test ? new BlockStatement([new IfStatement(test, body)]) : body;
+        const guard = new IfStatement(new UnaryExpression('!', new Identifier(flag)), run);
+
+        const sequence = new BlockStatement([decl, guard]);
+        // Not a scope: the flag belongs to the enclosing block.
+        (sequence as any)._sequence = true;
+        return sequence;
+    }
+
     // Parse statement
     parseStatement(handleCommas = true) {
         this.skipNewlines();
@@ -436,6 +482,10 @@ export class Parser {
         // Method declaration
         else if (this.match(TokenType.KEYWORD, 'method')) {
             stmt = this.parseMethodDeclaration();
+        }
+        // once [condition] block
+        else if (this.isOnceStatement()) {
+            stmt = this.parseOnceStatement();
         }
         // Function declaration
         else if (this.isFunctionDeclaration()) {
@@ -1032,6 +1082,12 @@ export class Parser {
                 paramType = (paramType || '') + this.advance().value;
             }
 
+            // Handle dotted type, plain, array or generic: chart.point p, chart.point[] pts
+            if (this.isDottedParamType()) {
+                const dottedType = this.parseTypeExpression();
+                paramType = paramType ? paramType + ' ' + dottedType : dottedType;
+            }
+
             // Handle generic type: array<float>, map<string, float>, etc.
             if (
                 this.peek().type === TokenType.IDENTIFIER &&
@@ -1100,6 +1156,17 @@ export class Parser {
         return new FunctionDeclaration(id, params, body, returnType);
     }
 
+    // A parameter type with a dotted name (`chart.point`, `lib.Type`), then `[]`, `<...>` or the parameter name.
+    private isDottedParamType(): boolean {
+        if (this.peek().type !== TokenType.IDENTIFIER || this.peek(1).type !== TokenType.DOT || this.peek(2).type !== TokenType.IDENTIFIER) return false;
+        let i = 3;
+        while (this.peek(i).type === TokenType.DOT && this.peek(i + 1).type === TokenType.IDENTIFIER) i += 2;
+        const next = this.peek(i);
+        if (next.type === TokenType.LBRACKET) return this.peek(i + 1).type === TokenType.RBRACKET;
+        if (next.type === TokenType.OPERATOR && next.value === '<') return true;
+        return this.isNameSlot(next);
+    }
+
     // Parse method declaration (method name(Type this, params) => ...)
     parseMethodDeclaration() {
         this.expect(TokenType.KEYWORD, 'method');
@@ -1130,6 +1197,12 @@ export class Parser {
                     paramType += ' ';
                 }
                 paramType = (paramType || '') + this.advance().value;
+            }
+
+            // Handle dotted type, plain, array or generic: chart.point p, chart.point[] pts
+            if (this.isDottedParamType()) {
+                const dottedType = this.parseTypeExpression();
+                paramType = paramType ? paramType + ' ' + dottedType : dottedType;
             }
 
             // Handle generic type: array<float>, map<string, float>, etc.
@@ -1312,6 +1385,20 @@ export class Parser {
         return false;
     }
 
+    // The statements that follow `first` on the same line, separated by commas.
+    private continueSequence(first: any): any {
+        if (!this.match(TokenType.COMMA)) return first;
+        const statements = [first];
+        while (this.match(TokenType.COMMA)) {
+            this.advance(); // consume comma
+            this.skipNewlines(true);
+            const next = this.parseStatementOrSequence();
+            if (Array.isArray(next)) statements.push(...next);
+            else if (next) statements.push(next);
+        }
+        return statements;
+    }
+
     // Parse statement or comma-separated sequence
     parseStatementOrSequence() {
         const startPos = this.pos;
@@ -1332,62 +1419,31 @@ export class Parser {
             return this.parseWhileStatement();
         }
 
+        if (this.isOnceStatement()) {
+            return this.parseOnceStatement();
+        }
+
         if (this.match(TokenType.KEYWORD, 'break') || this.match(TokenType.KEYWORD, 'continue')) {
             const keyword = this.advance().value;
             return new ExpressionStatement(new Identifier(keyword));
         }
 
-        // Check for var/varip declarations (can appear in function bodies)
+        // Check for var/varip declarations (can appear in function bodies), possibly
+        // followed by other statements on the same line: `var a = 0., c = close`
         if (this.match(TokenType.KEYWORD, 'var') || this.match(TokenType.KEYWORD, 'varip')) {
-            return this.parseVarDeclaration();
+            return this.continueSequence(this.parseVarDeclaration());
         }
 
         // Tuple destructuring [a, b] = ...
         if (this.isTupleDestructuring()) {
-            return this.parseTupleDestructuring();
+            return this.continueSequence(this.parseTupleDestructuring());
         }
 
         // Check for typed variable declaration (series float x = ...)
         // Also handles: type[] name = ... and type<generic> name = ...
         // Also handles comma-separated typed declarations: float num = 1.0, float den = 1.0
         if (this.peek().type === TokenType.IDENTIFIER && this.isTypedVarDeclaration()) {
-            const firstDecl = this.parseTypedVarDeclaration();
-
-            // Check for comma-separated typed declarations on the same line
-            if (this.match(TokenType.COMMA) && this.peek(1).type === TokenType.IDENTIFIER) {
-                const declarations: any[] = [firstDecl];
-                while (this.match(TokenType.COMMA)) {
-                    this.advance(); // consume comma
-                    this.skipNewlines(true);
-                    if (this.peek().type === TokenType.IDENTIFIER && this.isTypedVarDeclaration()) {
-                        declarations.push(this.parseTypedVarDeclaration());
-                    } else {
-                        // Not a typed declaration after comma — parse as a regular statement
-                        this.rejectReservedAssignmentTarget();
-                        const startToken = this.peek();
-                        const expr = this.parseExpression();
-                        if (this.match(TokenType.OPERATOR)) {
-                            const op = this.peek().value;
-                            if (['=', ':='].includes(op)) {
-                                this.advance();
-                                this.skipNewlines(true);
-                                const right = this.parseExpression();
-                                if (op === '=' && expr.type === 'Identifier') {
-                                    this.assertDeclarableName(expr, startToken);
-                                    this.assertNotTupleAssignment(expr, right, startToken);
-                                    declarations.push(new VariableDeclaration([new VariableDeclarator(expr, right)], VariableDeclarationKind.LET));
-                                } else {
-                                    declarations.push(new ExpressionStatement(new AssignmentExpression(op === ':=' ? '=' : op, expr, right)));
-                                }
-                            }
-                        }
-                        break;
-                    }
-                }
-                return declarations; // Return array of statements
-            }
-
-            return firstDecl;
+            return this.continueSequence(this.parseTypedVarDeclaration());
         }
 
         // Try to parse as sequence (assignment, assignment, ..., expression)
@@ -1395,6 +1451,20 @@ export class Parser {
         const sequenceItems = [];
 
         while (true) {
+            // A declaration or a tuple destructuring after a comma starts its own sequence.
+            if (
+                sequenceItems.length > 0 &&
+                (this.match(TokenType.KEYWORD, 'var') ||
+                    this.match(TokenType.KEYWORD, 'varip') ||
+                    this.isTupleDestructuring() ||
+                    (this.peek().type === TokenType.IDENTIFIER && this.isTypedVarDeclaration()))
+            ) {
+                const rest = this.parseStatementOrSequence();
+                if (Array.isArray(rest)) sequenceItems.push(...rest);
+                else if (rest) sequenceItems.push(rest);
+                break;
+            }
+
             // Parse one item (could be assignment or expression)
             this.rejectReservedAssignmentTarget();
             const startToken = this.peek();
