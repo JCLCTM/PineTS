@@ -769,8 +769,12 @@ export class Context {
     private static readonly PRECISION_EPSILON = 10 ** 10; // Cache default epsilon
 
     precision(value: number, decimals: number = 10) {
+        if (typeof value !== 'number') return value;
         const epsilon = decimals === 10 ? Context.PRECISION_EPSILON : 10 ** decimals;
-        return typeof value === 'number' ? Math.round(value * epsilon) / epsilon : value;
+        // From 2^53 / epsilon on, `value * epsilon` is inexact and the round trip moves the value
+        // (2136215970 -> 2136215969.9999998); such a double has no 10th decimal left to round.
+        if (!(Math.abs(value) * epsilon < 2 ** 53)) return value;
+        return Math.round(value * epsilon) / epsilon;
         //if (typeof n !== 'number' || isNaN(n)) return n;
         //return Number(n.toFixed(decimals));
     }

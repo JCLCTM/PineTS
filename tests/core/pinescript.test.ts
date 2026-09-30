@@ -1944,9 +1944,10 @@ describe('PineScript Language', () => {
         console.log('>>> TEST: Array Indexing');
         console.log('>>> result: ', context.result);
 
+        // array.new<T>(5) holds 5 na elements on TradingView
         const expected = {
-            first: [0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0],
-            second: [0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0],
+            first: Array(20).fill(NaN),
+            second: Array(20).fill(NaN),
             seventh: [20, 20, 20, 20, 20, 20, 20, 20, 20, 20, 20, 20, 20, 20, 20, 20, 20, 20, 20, 20],
         };
 
