@@ -490,7 +490,7 @@ export class Core {
         return val.toString();
     }
 
-    Type(definition: Record<string, string | [string, any]>) {
+    Type(definition: Record<string, string | [string, any]>, typeName?: string) {
         // Extract field names, types, and defaults from definition.
         // Fields can be either 'type' (no default) or ['type', defaultValue].
         const definitionKeys = Object.keys(definition);
@@ -513,6 +513,9 @@ export class Core {
         }
 
         const UDT: any = {
+            // The Pine type name, when the transpiler passed it (only for types that carry a user
+            // `method`): lets `Context.callMethod` recognise an instance of this type.
+            __name__: typeName,
             new: function (...args: any[]) {
                 // Map positional args to field names, applying defaults for missing args
                 const mappedArgs: Record<string, any> = {};

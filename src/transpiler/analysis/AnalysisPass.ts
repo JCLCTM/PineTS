@@ -157,6 +157,9 @@ export function preProcessUdtRegistry(ast: any, scopeManager: ScopeManager): voi
                         }
                     }
                     scopeManager.addUdtTypeName(decl.id.name, fields);
+                    // Lets the transformer tell the runtime which type this factory builds, when a
+                    // user method is declared on it (see `Context.callMethod`).
+                    decl.init._udtName = decl.id.name;
                 }
             }
         },
@@ -620,6 +623,8 @@ export function runAnalysisPass(ast: any, scopeManager: ScopeManager): string | 
                 expr.right?.value === true) {
                 const jsName = expr.left.object.name;
                 const pineName = jsName.startsWith('$M_') ? jsName.slice(3) : jsName;
+                // Overloads on other receiver types are emitted as `$M_<name>$<n>`.
+                scopeManager.addMethodCandidate(pineName.replace(/\$\d+$/, ''), jsName);
                 scopeManager.addUserMethod(pineName);
                 // Also expose the Pine name as a "user function" so the call-site
                 // check `isUserFunction(methodName) && isUserMethod(methodName)`

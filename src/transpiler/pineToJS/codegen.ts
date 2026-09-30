@@ -35,6 +35,8 @@ export class CodeGenerator {
     // UDT names that were renamed because they are JS reserved words
     // (`type new`). Type annotation strings naming them are rewritten too.
     private renamedTypeNames: Set<string>;
+    // Number of methods emitted so far per Pine name (overloads on different receiver types).
+    private methodNameCounts: Map<string, number> = new Map();
     constructor(options: { indentStr?: string; sourceCode?: string; includeSourceComments?: boolean } = {}) {
         this.indent = 0;
         this.indentStr = options.indentStr || '  ';
@@ -797,7 +799,16 @@ export class CodeGenerator {
         // not allow `$` in identifiers, so this prefix is collision-proof.
         // The call-site rewrite (ExpressionTransformer) and the marker reader
         // (AnalysisPass) both know about the prefix.
-        const jsFnName = isMethod ? `$M_${node.id.name}` : node.id.name;
+        // Pine allows several methods of one name on different receiver types
+        // (`method set(line ln, ...)` and `method set(box bx, ...)`). They would
+        // all hoist to the same JS function, so the second and later overloads get
+        // a `$<n>` suffix; AnalysisPass registers them all under the Pine name.
+        let jsFnName = node.id.name;
+        if (isMethod) {
+            const seen = (this.methodNameCounts.get(node.id.name) ?? 0) + 1;
+            this.methodNameCounts.set(node.id.name, seen);
+            jsFnName = seen === 1 ? `$M_${node.id.name}` : `$M_${node.id.name}$${seen}`;
+        }
 
         this.write('function ');
         this.write(jsFnName);
