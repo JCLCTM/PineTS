@@ -36,6 +36,14 @@ import { Ticker } from './namespaces/Ticker';
 import { isScalarHelper } from './namespaces/utils';
 import { receiverMatchesMethod } from './namespaces/methodDispatch';
 import type { IndicatorOptions } from './types/PineTypes';
+import { PineArrayObject, PineArrayType } from './namespaces/array/PineArrayObject';
+
+// Stand-in for an na drawing in getter / setter calls: getters return na (`get_text` and
+// `get_tooltip` the na string), setters and anything else do nothing.
+const NA_DRAWING: any = new Proxy(
+    {},
+    { get: (_target, prop) => (prop === 'get_text' || prop === 'get_tooltip' ? () => '' : () => NaN) },
+);
 
 export class Context {
     public data: any = {
@@ -416,7 +424,7 @@ export class Context {
             'label',
         );
         Object.defineProperty(this.pine['label'], 'all', {
-            get: () => labelHelper.all,
+            get: () => new PineArrayObject(labelHelper.all, PineArrayType.label, this),
         });
 
         // line namespace
@@ -458,7 +466,7 @@ export class Context {
             'line',
         );
         Object.defineProperty(this.pine['line'], 'all', {
-            get: () => lineHelper.all,
+            get: () => new PineArrayObject(lineHelper.all, PineArrayType.line, this),
         });
 
         // box namespace
@@ -501,21 +509,23 @@ export class Context {
             'box',
         );
         Object.defineProperty(this.pine['box'], 'all', {
-            get: () => boxHelper.all,
+            get: () => new PineArrayObject(boxHelper.all, PineArrayType.box, this),
         });
 
         // linefill namespace
         const linefillHelper = new LinefillHelper(this);
+        // line.delete also deletes the linefills of that line
+        lineHelper.linefills = linefillHelper;
         this.bindContextObject(linefillHelper, ['any', 'new', 'param', 'set_color', 'get_line1', 'get_line2', 'delete'], 'linefill');
         Object.defineProperty(this.pine['linefill'], 'all', {
-            get: () => linefillHelper.all,
+            get: () => new PineArrayObject(linefillHelper.all, PineArrayType.linefill, this),
         });
 
         // polyline namespace
         const polylineHelper = new PolylineHelper(this);
         this.bindContextObject(polylineHelper, ['any', 'new', 'param', 'delete'], 'polyline');
         Object.defineProperty(this.pine['polyline'], 'all', {
-            get: () => polylineHelper.all,
+            get: () => new PineArrayObject(polylineHelper.all, PineArrayType.any, this),
         });
 
         // table namespace
@@ -551,7 +561,7 @@ export class Context {
             'table',
         );
         Object.defineProperty(this.pine['table'], 'all', {
-            get: () => tableHelper.all,
+            get: () => new PineArrayObject(tableHelper.all, PineArrayType.table, this),
         });
 
         // Register all drawing helpers for streaming rollback and plot sync
@@ -965,6 +975,16 @@ export class Context {
             this.lctx.set(id, ctx);
         }
         return ctx;
+    }
+
+    /**
+     * Receiver of a drawing getter / setter call (`b.get_left()`, `t.box.set_right(x)`): the
+     * drawing itself, or for an na drawing a stand-in whose getters return na (`get_text` the
+     * na string) and whose setters do nothing, as on TradingView.
+     */
+    public drawingOrNa(receiver: any) {
+        const isNa = receiver === null || receiver === undefined || (typeof receiver === 'number' && isNaN(receiver));
+        return isNa ? NA_DRAWING : receiver;
     }
 
     /**

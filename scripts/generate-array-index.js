@@ -82,6 +82,11 @@ ${objectPrivateProps}
 ${objectInitProps}
     }
 
+    // Element count for JavaScript callers (PineTS syntax: \`line.all.length\`); Pine uses size().
+    get length(): number {
+        return this.array.length;
+    }
+
     toString(): string {
         return '[' + tostringElements(this).join(', ') + ']';
     }

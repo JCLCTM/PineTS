@@ -2303,10 +2303,24 @@ function transformCallExpressionInner(node: any, scopeManager: ScopeManager, nam
             calleeObj.callee?.type === 'MemberExpression' &&
             calleeObj.callee.object?.name === CONTEXT_NAME &&
             ['call', 'callMethod'].includes(calleeObj.callee.property?.name);
-        const isFieldDelete =
+        const isFieldReceiver =
+            (calleeObj?.type === 'MemberExpression' && !calleeObj.computed && calleeObj.property?.type === 'Identifier') || isUserCallResult;
+        const isFieldDelete = !node.callee.computed && node.callee.property?.name === 'delete' && isFieldReceiver;
+        // Getters and setters of a drawing that is na (an unset UDT field, `box b = na`) return na
+        // ("" for get_text) and do nothing on TradingView: the receiver goes through
+        // `$.drawingOrNa`, which stands in for an na drawing.
+        const isDrawingAccessor =
             !node.callee.computed &&
-            node.callee.property?.name === 'delete' &&
-            ((calleeObj?.type === 'MemberExpression' && !calleeObj.computed && calleeObj.property?.type === 'Identifier') || isUserCallResult);
+            /^(get|set)_\w+$/.test(node.callee.property?.name ?? '') &&
+            (isDirect || isChained || isFieldReceiver);
+        if (isDrawingAccessor) {
+            node.callee.object = {
+                type: 'CallExpression',
+                callee: ASTFactory.createMemberExpression(ASTFactory.createContextIdentifier(), ASTFactory.createIdentifier('drawingOrNa')),
+                arguments: [calleeObj],
+                _transformed: true,
+            };
+        }
 
         if (isDirect || isChained || isFieldDelete) {
             // Double optional chaining: obj?.method?.()

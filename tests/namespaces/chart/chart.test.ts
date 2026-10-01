@@ -150,7 +150,7 @@ describe('CHART Namespace', () => {
             expect(result.lblXloc[0]).toBe('bi');
         });
 
-        it('label.set_point() with time-based point sets xloc to bar_time', async () => {
+        it('label.set_point() keeps the label xloc (a from_time point on a bar_index label gives na)', async () => {
             const pineTS = new PineTS(Provider.Mock, 'BTCUSDC', 'D', null, new Date('2025-01-01').getTime(), new Date('2025-11-20').getTime());
 
             const { result } = await pineTS.run((context) => {
@@ -162,8 +162,9 @@ describe('CHART Namespace', () => {
                 return { lblX, lblXloc };
             });
 
-            expect(result.lblX[0]).toBe(1700000000000);
-            expect(result.lblXloc[0]).toBe('bt');
+            // TradingView keeps the label's xloc (bar_index): a from_time point has no index, so x is na.
+            expect(result.lblX[0]).toBeNaN();
+            expect(result.lblXloc[0]).toBe('bi');
         });
     });
 });

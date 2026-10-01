@@ -152,6 +152,11 @@ export class PineArrayObject {
         this._variance = variance_factory(this.context);
     }
 
+    // Element count for JavaScript callers (PineTS syntax: `line.all.length`); Pine uses size().
+    get length(): number {
+        return this.array.length;
+    }
+
     toString(): string {
         return '[' + tostringElements(this).join(', ') + ']';
     }
