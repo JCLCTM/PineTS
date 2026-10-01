@@ -71,6 +71,7 @@ async function generateIndex() {
 // Run: npm run generate:array-index
 
 ${objectImports}
+import { tostringElements } from './format';
 
 ${pineArrayTypeEnum}
 
@@ -82,7 +83,7 @@ ${objectInitProps}
     }
 
     toString(): string {
-        return '[' + this.array.toString().replace(/,/g, ', ') + ']';
+        return '[' + tostringElements(this).join(', ') + ']';
     }
 
     [Symbol.iterator]() {

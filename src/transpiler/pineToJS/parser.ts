@@ -1956,6 +1956,7 @@ export class Parser {
                 let depth = 1;
                 let isGeneric = true;
                 let genericType = '';
+                let topLevelTypes = '';
 
                 // Known Pine types that have dedicated new_TYPE methods
                 const KNOWN_GENERIC_TYPES = new Set([
@@ -1976,6 +1977,7 @@ export class Parser {
                         if (depth === 1 && this.match(TokenType.IDENTIFIER) && genericType === '') {
                             genericType = this.peek().value;
                         }
+                        if (depth === 1) topLevelTypes += this.peek().value;
                         this.advance();
                     } else {
                         // Not a generic type, restore position
@@ -1996,7 +1998,13 @@ export class Parser {
 
                 // If we successfully parsed generic and next is (, parse call
                 if (isGeneric && this.match(TokenType.LPAREN)) {
+                    const isMapNew = expr.type === 'MemberExpression' && expr.property.name === 'new' && expr.object.name === 'map';
                     expr = this.parseCallExpression(expr);
+                    // map.new<K, string>(): a missing key reads as the na string, so the map
+                    // needs its value type at runtime.
+                    if (isMapNew && topLevelTypes.split(',')[1] === 'string' && expr.arguments.length === 0) {
+                        expr.arguments.push(new Literal('string'));
+                    }
                     continue;
                 } else if (!isGeneric) {
                     // Not a generic, break and let comparison operator handle it
