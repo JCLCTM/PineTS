@@ -95,7 +95,9 @@ export class NAHelper {
         if (typeof val === 'number') return val !== val;
         // The na string is the empty string: na("") is true on TradingView.
         if (val === '') return true;
-        // Objects (arrays, UDTs, etc.) and other strings are never na
+        // A deleted drawing (line, label, box, linefill, polyline, table) is na.
+        if (typeof val === 'object' && val._deleted === true) return true;
+        // Other objects (arrays, UDTs, etc.) and other strings are never na
         return false;
     }
 }
@@ -244,8 +246,8 @@ export class Core {
 
     na(series: any) {
         const val = Series.from(series).get(0);
-        // The na string is the empty string: na("") is true on TradingView.
-        return val === null || val === undefined || val === '' || (typeof val === 'number' && isNaN(val));
+        // The na string is the empty string: na("") is true on TradingView. A deleted drawing is na.
+        return val === null || val === undefined || val === '' || (typeof val === 'number' && isNaN(val)) || (typeof val === 'object' && val._deleted === true);
     }
     nz(series: any, replacement: number = 0) {
         const val = Series.from(series).get(0);
@@ -501,6 +503,7 @@ export class Core {
         const definitionKeys = Object.keys(definition);
         const fieldTypes: Record<string, string> = {};
         const fieldDefaults: Record<string, any> = {};
+        const pineVersion = this.context?.pineVersion;
         for (const key of definitionKeys) {
             let val: any = definition[key];
             // $.param() wraps ['type', default] arrays in Series — unwrap them
@@ -567,6 +570,11 @@ export class Core {
                     if (/(^|\s)string$/.test(fieldTypes[key] ?? '')) {
                         const v = mappedArgs[key];
                         if (v === undefined || v === null || (typeof v === 'number' && isNaN(v))) mappedArgs[key] = '';
+                    }
+                    // A v6 bool is never na: an unset bool field is false.
+                    if (pineVersion >= 6 && /(^|\s)bool$/.test(fieldTypes[key] ?? '')) {
+                        const v = mappedArgs[key];
+                        if (v === undefined || v === null || (typeof v === 'number' && isNaN(v))) mappedArgs[key] = false;
                     }
                 }
                 return new PineTypeObject(mappedArgs, this.context, UDT);
