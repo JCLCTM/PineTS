@@ -6,7 +6,7 @@ import { splitTickerModifier, withTickerModifier } from './tickerModifier';
 import { createSyminfo } from './namespaces/Syminfo';
 import { Series } from './Series';
 import { Indicator } from './Indicator';
-import { processStrategyOrders, processExitOrders, processMarginCall, finalizeStrategyBar, finalizeStrategyRun, isAdverseFirstBar, applyPendingCloseMarginCall, snapshotStrategyState, restoreStrategyState } from './namespaces/strategy/utils';
+import { processStrategyOrders, processOrdersOnClose, processExitOrders, processMarginCall, finalizeStrategyBar, finalizeStrategyRun, isAdverseFirstBar, applyPendingCloseMarginCall, snapshotStrategyState, restoreStrategyState } from './namespaces/strategy/utils';
 
 import { parseTimeframe, timeframeSeconds } from './timeframe';
 
@@ -1194,6 +1194,10 @@ export class PineTS {
             }
 
             const result = await transpiledFn(context);
+
+            // Market orders placed on this bar that fill at its close
+            // (process_orders_on_close, close(immediately = true)).
+            if (context.strategy) processOrdersOnClose(context);
 
             //collect results
             if (typeof result === 'object') {
