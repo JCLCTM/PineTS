@@ -7,9 +7,8 @@ import { resolveMapKey } from '../utils';
 export function get(context: Context) {
     return (id: PineMapObject, key: any) => {
         const val = id.map.get(resolveMapKey(id.map, key));
-        // If val is undefined (not found), return NaN (standard Pine na)
-        // Note: Pine maps can't store 'na' as a value effectively if we use undefined,
-        // but Pine maps also likely treat non-existent keys as returning na.
-        return val === undefined ? NaN : val;
+        // A missing key reads as na: the na string ("") for map<K, string>, NaN otherwise.
+        if (val === undefined) return id.valueType === 'string' ? '' : NaN;
+        return val;
     };
 }

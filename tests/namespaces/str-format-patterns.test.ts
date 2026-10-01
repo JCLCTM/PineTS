@@ -96,7 +96,9 @@ describe('Str.tostring Format Patterns', () => {
         expect(last(result.r1)).toBe('3.1416');
     });
 
-    it('should format with "integer" named format', async () => {
+    // "integer" is not a format constant: TradingView treats it as a pattern without digits,
+    // i.e. a literal prefix to the rounded integer (str.tostring(2.5, "integer") is "integer3").
+    it('should treat "integer" as a literal prefix to the rounded integer', async () => {
         const pineTS = new PineTS(Provider.Mock, 'BTCUSDC', 'D', null, sDate, eDate);
 
         const sourceCode = (context: any) => {
@@ -109,10 +111,11 @@ describe('Str.tostring Format Patterns', () => {
         const { result } = await pineTS.run(sourceCode);
         const last = (arr: any[]) => arr[arr.length - 1];
 
-        expect(last(result.r1)).toBe('124');
-        expect(last(result.r2)).toBe('0');
+        expect(last(result.r1)).toBe('integer124');
+        expect(last(result.r2)).toBe('-integer0');
     });
 
+    // format.percent appends "%" to the value with 2 decimals; it does not multiply by 100.
     it('should format with "percent" named format', async () => {
         const pineTS = new PineTS(Provider.Mock, 'BTCUSDC', 'D', null, sDate, eDate);
 
@@ -126,11 +129,11 @@ describe('Str.tostring Format Patterns', () => {
         const { result } = await pineTS.run(sourceCode);
         const last = (arr: any[]) => arr[arr.length - 1];
 
-        expect(last(result.r1)).toBe('45.67%');
-        expect(last(result.r2)).toBe('100.00%');
+        expect(last(result.r1)).toBe('0.46%');
+        expect(last(result.r2)).toBe('1.00%');
     });
 
-    it('should format with "volume" named format (integer)', async () => {
+    it('should format with "volume" named format (K / M / B / T units)', async () => {
         const pineTS = new PineTS(Provider.Mock, 'BTCUSDC', 'D', null, sDate, eDate);
 
         const sourceCode = (context: any) => {
@@ -142,7 +145,7 @@ describe('Str.tostring Format Patterns', () => {
         const { result } = await pineTS.run(sourceCode);
         const last = (arr: any[]) => arr[arr.length - 1];
 
-        expect(last(result.r1)).toBe('1234568');
+        expect(last(result.r1)).toBe('1.235M');
     });
 
     it('should return String(value) for NaN', async () => {

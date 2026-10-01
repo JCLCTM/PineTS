@@ -93,7 +93,9 @@ export class NAHelper {
         if (val === null || val === undefined) return true;
         // For numbers, check NaN (Pine Script na for numeric types)
         if (typeof val === 'number') return val !== val;
-        // Objects (arrays, UDTs, etc.) and strings are never na
+        // The na string is the empty string: na("") is true on TradingView.
+        if (val === '') return true;
+        // Objects (arrays, UDTs, etc.) and other strings are never na
         return false;
     }
 }
@@ -242,7 +244,8 @@ export class Core {
 
     na(series: any) {
         const val = Series.from(series).get(0);
-        return val === null || val === undefined || (typeof val === 'number' && isNaN(val));
+        // The na string is the empty string: na("") is true on TradingView.
+        return val === null || val === undefined || val === '' || (typeof val === 'number' && isNaN(val));
     }
     nz(series: any, replacement: number = 0) {
         const val = Series.from(series).get(0);
@@ -487,6 +490,8 @@ export class Core {
         //Pine Script seems to be throwing an error for any argument that is not a string
         //the following implementation might need to be updated in the future
         const val = Series.from(series).get(0);
+        // string(na) is the na string, which is the empty string.
+        if (val === null || val === undefined || (typeof val === 'number' && isNaN(val))) return '';
         return val.toString();
     }
 
@@ -557,6 +562,12 @@ export class Core {
                         mappedArgs[key] = Series.from(fieldDefaults[key]).get(0);
                     }
                     // else: field remains absent (na/undefined)
+
+                    // An na string field holds the na string, which is the empty string.
+                    if (/(^|\s)string$/.test(fieldTypes[key] ?? '')) {
+                        const v = mappedArgs[key];
+                        if (v === undefined || v === null || (typeof v === 'number' && isNaN(v))) mappedArgs[key] = '';
+                    }
                 }
                 return new PineTypeObject(mappedArgs, this.context, UDT);
             },
