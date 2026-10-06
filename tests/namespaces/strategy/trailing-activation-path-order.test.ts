@@ -126,4 +126,25 @@ if bar_index >= 10 and strategy.position_size > 0
         expect(trades[0].exit_comment).toBe('TRL');
         expect(trades[0].exit_price).toBeCloseTo(99, 6);
     });
+
+    it('a re-placed exit (same id) restarts its trail from the new trail_price instead of inheriting the old peak', async () => {
+        // LuxAlgo/PineTS#367 review (BINANCE:BTCUSDT 1h): `strategy.exit(..., trail_price = close, trail_offset = 20000)`
+        // re-called every bar — TradingView filled at the previous CLOSE minus the offset, PineTS at the previous HIGH
+        // minus the offset because the replaced order's peak was copied onto the new one.
+        const bars = flatBars(10);
+        bars.push(bar(10, 100, 101, 99, 100)); // first placement: trail_price 100 (reached), offset 200 ticks -> 98
+        bars.push(bar(11, 100, 105, 100, 104)); // peak would ride to 105 (trigger 103); re-placed at the close with trail_price 104
+        bars.push(bar(12, 104, 104, 101, 101.5)); // new order: peak 104 -> trigger 102 (TradingView); carried peak 105 -> 103
+        for (let i = 13; i < 16; i++) bars.push(bar(i, 101, 102, 100, 101));
+        const trades = await run(
+            bars,
+            `if bar_index >= 10 and strategy.position_size > 0
+    strategy.exit("X", from_entry="L", trail_price = close, trail_offset = 200, comment_trailing = "TRL")
+`,
+        );
+        expect(trades).toHaveLength(1);
+        expect(trades[0].exit_bar_index).toBe(12);
+        expect(trades[0].exit_comment).toBe('TRL');
+        expect(trades[0].exit_price).toBeCloseTo(102, 6);
+    });
 });
